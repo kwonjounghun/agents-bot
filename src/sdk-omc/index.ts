@@ -34,6 +34,13 @@ import type { OmcSdkOptions, SkillMode, ModeState, ModelTier } from './types';
 // Re-export types
 export * from './types';
 
+// Re-export executor
+export {
+  PersistentModeExecutor,
+  createPersistentModeExecutor,
+  DEFAULT_CONFIG as DEFAULT_EXECUTOR_CONFIG
+} from './executor';
+
 // Re-export modules
 export { omcAgents, getAgent, listAgentNames } from './agents';
 export { omcSkillTools, getSkillTool, listSkillToolNames } from './skills';

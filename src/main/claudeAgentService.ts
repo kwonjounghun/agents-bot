@@ -42,7 +42,12 @@ import {
 
 // SDK-OMC (built-in OMC implementation)
 import * as SdkOmc from '../sdk-omc';
-import type { OmcSdkOptions } from '../sdk-omc/types';
+import type { OmcSdkOptions, ExecutionResult, SkillMode } from '../sdk-omc/types';
+import {
+  PersistentModeExecutor,
+  createPersistentModeExecutor,
+  type QueryResult
+} from '../sdk-omc/executor';
 
 // OMC state
 let omcHooks: any = null;
@@ -64,6 +69,9 @@ export class ClaudeAgentService extends EventEmitter {
   private isRunning: boolean = false;
   private currentWorkingDirectory: string = process.cwd();
   private sdkOmcEnabled: boolean = false;
+  private persistentExecutor: PersistentModeExecutor | null = null;
+  private lastQueryResponse: string = '';
+  private lastToolsUsed: string[] = [];
 
   constructor() {
     super();
@@ -403,5 +411,182 @@ export class ClaudeAgentService extends EventEmitter {
    */
   isQueryRunning(): boolean {
     return this.isRunning;
+  }
+
+  /**
+   * Execute a persistent mode (Ralph, Autopilot, etc.)
+   * This implements the persistent execution loop that continues until completion.
+   */
+  async executePersistentMode(
+    mode: SkillMode,
+    task: string,
+    options?: { maxIterations?: number; requireVerification?: boolean }
+  ): Promise<ExecutionResult> {
+    // Initialize OMC if needed
+    if (!omcInitialized && this.sdkOmcEnabled) {
+      await this.initSdkOmc(this.currentWorkingDirectory);
+    }
+
+    // Create executor if not exists
+    if (!this.persistentExecutor) {
+      this.persistentExecutor = createPersistentModeExecutor(
+        this.currentWorkingDirectory,
+        this.createQueryFunction(),
+        options
+      );
+
+      // Forward executor events
+      this.persistentExecutor.on('modeStarted', (data) => {
+        this.emit('persistentModeStarted', data);
+        this.emit('message', {
+          type: 'text',
+          content: `[${mode.toUpperCase()}] Started - ${task}`
+        } as ClaudeAgentMessage);
+      });
+
+      this.persistentExecutor.on('iterationStarted', (data) => {
+        this.emit('persistentIterationStarted', data);
+        this.emit('message', {
+          type: 'text',
+          content: `[${mode.toUpperCase()}] Iteration ${data.iteration}/${data.maxIterations}`
+        } as ClaudeAgentMessage);
+      });
+
+      this.persistentExecutor.on('iterationCompleted', (data) => {
+        this.emit('persistentIterationCompleted', data);
+      });
+
+      this.persistentExecutor.on('completionChecked', (data) => {
+        this.emit('persistentCompletionChecked', data);
+        if (data.checkResult.isComplete) {
+          this.emit('message', {
+            type: 'text',
+            content: `[${mode.toUpperCase()}] Completion detected, verifying...`
+          } as ClaudeAgentMessage);
+        }
+      });
+
+      this.persistentExecutor.on('verificationCompleted', (data) => {
+        this.emit('persistentVerificationCompleted', data);
+        this.emit('message', {
+          type: 'text',
+          content: `[${mode.toUpperCase()}] Verification: ${data.approved ? 'APPROVED' : 'REJECTED'}`
+        } as ClaudeAgentMessage);
+      });
+
+      this.persistentExecutor.on('modeCompleted', (data) => {
+        this.emit('persistentModeCompleted', data);
+        this.emit('message', {
+          type: 'result',
+          content: `[${mode.toUpperCase()}] Completed after ${data.iteration} iterations`
+        } as ClaudeAgentMessage);
+      });
+
+      this.persistentExecutor.on('modeEnded', (data) => {
+        this.emit('persistentModeEnded', data);
+      });
+    }
+
+    // Execute the appropriate mode
+    switch (mode) {
+      case 'ralph':
+        return this.persistentExecutor.executeRalph(task);
+      case 'autopilot':
+        return this.persistentExecutor.executeAutopilot(task);
+      default:
+        return {
+          success: false,
+          mode,
+          iterations: 0,
+          error: `Persistent execution not implemented for mode: ${mode}`
+        };
+    }
+  }
+
+  /**
+   * Execute Ralph mode - persistent loop until task completion
+   */
+  async executeRalph(task: string): Promise<ExecutionResult> {
+    return this.executePersistentMode('ralph', task);
+  }
+
+  /**
+   * Execute Autopilot mode - full autonomous execution
+   */
+  async executeAutopilot(goal: string): Promise<ExecutionResult> {
+    return this.executePersistentMode('autopilot', goal);
+  }
+
+  /**
+   * Stop persistent mode execution
+   */
+  stopPersistentMode(): void {
+    if (this.persistentExecutor) {
+      this.persistentExecutor.stop();
+    }
+    this.stop();
+  }
+
+  /**
+   * Check if persistent mode is running
+   */
+  isPersistentModeRunning(): boolean {
+    return this.persistentExecutor?.getIsRunning() || false;
+  }
+
+  /**
+   * Create a query function for the persistent executor
+   */
+  private createQueryFunction(): (prompt: string) => Promise<QueryResult> {
+    return async (prompt: string): Promise<QueryResult> => {
+      this.lastQueryResponse = '';
+      this.lastToolsUsed = [];
+
+      return new Promise((resolve) => {
+        const messageHandler = (msg: ClaudeAgentMessage) => {
+          if (msg.type === 'text' || msg.type === 'thinking') {
+            this.lastQueryResponse += msg.content;
+          }
+          if (msg.type === 'tool_use' && msg.toolName) {
+            this.lastToolsUsed.push(msg.toolName);
+          }
+          if (msg.type === 'result') {
+            this.lastQueryResponse += msg.content;
+          }
+          if (msg.type === 'error') {
+            this.removeListener('message', messageHandler);
+            resolve({
+              success: false,
+              response: this.lastQueryResponse,
+              toolsUsed: this.lastToolsUsed,
+              error: msg.content
+            });
+          }
+        };
+
+        this.on('message', messageHandler);
+
+        // Execute query
+        this.query({
+          prompt,
+          workingDirectory: this.currentWorkingDirectory
+        }).then(() => {
+          this.removeListener('message', messageHandler);
+          resolve({
+            success: true,
+            response: this.lastQueryResponse,
+            toolsUsed: this.lastToolsUsed
+          });
+        }).catch((error) => {
+          this.removeListener('message', messageHandler);
+          resolve({
+            success: false,
+            response: this.lastQueryResponse,
+            toolsUsed: this.lastToolsUsed,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        });
+      });
+    };
   }
 }

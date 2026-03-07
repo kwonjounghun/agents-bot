@@ -158,3 +158,47 @@ export interface AutopilotState extends ModeState {
   goal?: string;
   planPath?: string;
 }
+
+// Persistent mode configuration
+export interface PersistentModeConfig {
+  maxIterations: number;
+  checkCompletionAfterEachIteration: boolean;
+  requireVerification: boolean;
+  verificationModel: ModelTier;
+  continuePrompt: string;
+  completionPatterns: RegExp[];
+  failurePatterns: RegExp[];
+}
+
+// Execution result from persistent mode
+export interface ExecutionResult {
+  success: boolean;
+  mode: SkillMode;
+  iterations: number;
+  duration?: number;
+  finalResponse?: string;
+  error?: string;
+}
+
+// Completion check result
+export interface CompletionCheckResult {
+  isComplete: boolean;
+  isBlocked?: boolean;
+  reason?: string;
+  confidence?: number;
+}
+
+// Persistent mode events
+export interface PersistentModeEvents {
+  modeStarted: { mode: SkillMode; task: string; state: ModeState };
+  modeCompleted: { mode: SkillMode; iteration: number; verified: boolean };
+  modeEnded: { mode: SkillMode; iterations: number };
+  iterationStarted: { mode: SkillMode; iteration: number; maxIterations: number };
+  iterationCompleted: { mode: SkillMode; iteration: number; result: unknown };
+  completionChecked: { mode: SkillMode; iteration: number; checkResult: CompletionCheckResult };
+  verificationStarted: { mode: SkillMode };
+  verificationCompleted: { mode: SkillMode; approved: boolean; response: string };
+  verificationFailed: { mode: SkillMode; iteration: number };
+  verificationError: { mode: SkillMode; error: unknown };
+  stopRequested: Record<string, never>;
+}
