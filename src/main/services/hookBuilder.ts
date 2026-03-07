@@ -15,6 +15,7 @@
 export interface AgentStartEvent {
   agentId: string;
   agentType: string;
+  toolUseId?: string;  // The tool_use_id that spawned this agent (for message routing)
 }
 
 export interface AgentStopEvent {
@@ -33,6 +34,14 @@ export interface HookInput {
   subagent_type?: string;
   type?: string;
   agent_transcript_path?: string;
+  // Tool use ID that spawned this subagent (for message routing)
+  tool_use_id?: string;
+  // Additional fields that SDK might pass
+  hook_event_name?: string;
+  session_id?: string;
+  cwd?: string;
+  // Catch-all for any other fields
+  [key: string]: unknown;
 }
 
 export interface HookResult {
@@ -62,12 +71,23 @@ export function buildBaseHooks(callbacks: HookCallbacks): SDKHooks {
   return {
     SubagentStart: [{
       hooks: [async (input: HookInput): Promise<HookResult> => {
+        // Debug: Log all fields received from SDK
+        console.log('[HookBuilder] SubagentStart input:', JSON.stringify(input, null, 2));
+
         // Try to get the agent type from various possible fields
+        // SDK passes: agent_type (internal type) and potentially subagent_type (user-specified)
         const agentType = input.subagent_type || input.agent_type || input.type || 'unknown';
+
+        console.log('[HookBuilder] Resolved agentType:', agentType,
+          '(subagent_type:', input.subagent_type,
+          ', agent_type:', input.agent_type,
+          ', type:', input.type,
+          ', tool_use_id:', input.tool_use_id, ')');
 
         callbacks.onAgentStart({
           agentId: input.agent_id || '',
-          agentType
+          agentType,
+          toolUseId: input.tool_use_id
         });
 
         return { continue: true };

@@ -23,6 +23,8 @@ export interface ParsedMessage {
   turns?: number;
   isSuccess?: boolean;
   agents?: string[];
+  /** Tool use ID that spawned the subagent (for routing messages to correct widget) */
+  parentToolUseId?: string;
 }
 
 export interface TextDelta {
@@ -48,13 +50,17 @@ export interface ToolUseBlock {
 
 export interface AssistantMessage {
   type: 'assistant';
+  /** Tool use ID that spawned this subagent (present for subagent messages) */
+  parent_tool_use_id?: string;
   message?: {
-    content?: Array<ToolUseBlock | { type: string }>;
+    content?: Array<ToolUseBlock | { type: string; text?: string; thinking?: string }>;
   };
 }
 
 export interface StreamEvent {
   type: 'stream_event';
+  /** Tool use ID that spawned this subagent (present for subagent messages) */
+  parent_tool_use_id?: string;
   event?: ContentBlockDelta;
 }
 
@@ -110,27 +116,57 @@ export function parseToolUse(block: ToolUseBlock): ParsedMessage {
  */
 export function parseStreamEvent(message: StreamEvent): ParsedMessage | null {
   const event = message.event;
+  const parentToolUseId = message.parent_tool_use_id;
+
+  // Debug: Log stream event details
+  console.log('[MessageParser] parseStreamEvent:', 'has event:', !!event, 'event.type:', event?.type,
+    'parent_tool_use_id:', parentToolUseId || 'none');
 
   if (!event || event.type !== 'content_block_delta') {
+    if (event) {
+      console.log('[MessageParser] Skipping stream event type:', event.type);
+    }
     return null;
   }
 
   const delta = event.delta;
+  console.log('[MessageParser] delta.type:', delta?.type);
 
   if (delta.type === 'text_delta') {
-    return parseTextDelta(delta as TextDelta);
+    const parsed = parseTextDelta(delta as TextDelta);
+    parsed.parentToolUseId = parentToolUseId;
+    return parsed;
   }
 
   if (delta.type === 'thinking_delta') {
-    return parseThinkingDelta(delta as ThinkingDelta);
+    const parsed = parseThinkingDelta(delta as ThinkingDelta);
+    parsed.parentToolUseId = parentToolUseId;
+    return parsed;
   }
 
+  console.log('[MessageParser] Unknown delta type:', (delta as { type?: string })?.type);
   return null;
 }
 
 /**
- * Parse an assistant message and extract tool use blocks.
- * Returns an array since assistant messages can contain multiple tool uses.
+ * Text block from assistant message
+ */
+export interface TextBlock {
+  type: 'text';
+  text: string;
+}
+
+/**
+ * Thinking block from assistant message (extended thinking)
+ */
+export interface ThinkingBlock {
+  type: 'thinking';
+  thinking: string;
+}
+
+/**
+ * Parse an assistant message and extract all content blocks.
+ * Returns an array since assistant messages can contain multiple blocks.
  */
 export function parseAssistantMessage(message: AssistantMessage): ParsedMessage[] {
   const results: ParsedMessage[] = [];
@@ -139,9 +175,35 @@ export function parseAssistantMessage(message: AssistantMessage): ParsedMessage[
     return results;
   }
 
+  const parentToolUseId = message.parent_tool_use_id;
+  console.log('[MessageParser] parseAssistantMessage: block count:', message.message.content.length,
+    'parent_tool_use_id:', parentToolUseId || 'none');
+
   for (const block of message.message.content) {
+    console.log('[MessageParser] Block type:', block.type);
+
     if (block.type === 'tool_use') {
-      results.push(parseToolUse(block as ToolUseBlock));
+      const parsed = parseToolUse(block as ToolUseBlock);
+      parsed.parentToolUseId = parentToolUseId;
+      results.push(parsed);
+    } else if (block.type === 'text') {
+      const textBlock = block as unknown as TextBlock;
+      if (textBlock.text && textBlock.text.length > 0) {
+        results.push({
+          type: 'text',
+          content: textBlock.text,
+          parentToolUseId
+        });
+      }
+    } else if (block.type === 'thinking') {
+      const thinkingBlock = block as unknown as ThinkingBlock;
+      if (thinkingBlock.thinking && thinkingBlock.thinking.length > 0) {
+        results.push({
+          type: 'thinking',
+          content: thinkingBlock.thinking,
+          parentToolUseId
+        });
+      }
     }
   }
 
@@ -187,14 +249,22 @@ export function parseMessage(message: unknown): ParsedMessage | ParsedMessage[] 
     return null;
   }
 
-  const msg = message as { type?: string };
+  const msg = message as { type?: string; subtype?: string };
+
+  // Debug: Log all message types we receive
+  console.log('[MessageParser] Received message type:', msg.type, 'subtype:', msg.subtype || 'none');
 
   switch (msg.type) {
     case 'assistant':
       return parseAssistantMessage(message as AssistantMessage);
 
-    case 'stream_event':
-      return parseStreamEvent(message as StreamEvent);
+    case 'stream_event': {
+      const result = parseStreamEvent(message as StreamEvent);
+      if (result) {
+        console.log('[MessageParser] Parsed stream_event:', result.type, 'content length:', result.content?.length || 0);
+      }
+      return result;
+    }
 
     case 'result':
       return parseResultMessage(message as ResultMessage);
@@ -207,6 +277,7 @@ export function parseMessage(message: unknown): ParsedMessage | ParsedMessage[] 
       return null;
 
     default:
+      console.log('[MessageParser] Unknown message type:', msg.type, JSON.stringify(message).substring(0, 200));
       return null;
   }
 }

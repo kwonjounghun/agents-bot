@@ -60,6 +60,8 @@ export interface ClaudeAgentMessage {
   toolInput?: string;
   costUsd?: number;
   turns?: number;
+  /** Tool use ID that spawned the subagent (for routing to correct widget) */
+  parentToolUseId?: string;
 }
 
 export { AgentStartEvent, AgentStopEvent };
@@ -391,7 +393,8 @@ export class ClaudeAgentService extends EventEmitter {
       toolName: parsed.toolName,
       toolInput: parsed.toolInput,
       costUsd: parsed.costUsd,
-      turns: parsed.turns
+      turns: parsed.turns,
+      parentToolUseId: parsed.parentToolUseId
     } as ClaudeAgentMessage);
   }
 
