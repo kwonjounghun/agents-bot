@@ -29,6 +29,15 @@ export const AccumulatingSpeechBubble: React.FC<AccumulatingSpeechBubbleProps> =
   const isUserScrolling = useRef(false);
   const scrollTimeout = useRef<NodeJS.Timeout | null>(null);
 
+  // Cleanup timeout on unmount to prevent memory leak
+  useEffect(() => {
+    return () => {
+      if (scrollTimeout.current) {
+        clearTimeout(scrollTimeout.current);
+      }
+    };
+  }, []);
+
   // Auto-scroll to bottom when new content arrives (unless user is scrolling)
   useEffect(() => {
     if (scrollRef.current && !isUserScrolling.current) {

@@ -1,6 +1,27 @@
+/* Google Fonts - must come before @tailwind */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* CSS Custom Properties */
+:root {
+  --color-navy: #0A1628;
+  --color-navy-light: #1A2A42;
+  --color-cyan-electric: #00E5FF;
+  --color-cyan-glow: rgba(0, 229, 255, 0.25);
+
+  /* Status ring sizes */
+  --ring-sm: 24px;
+  --ring-md: 32px;
+  --ring-lg: 40px;
+
+  /* Animation durations */
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+}
 
 * {
   margin: 0;
@@ -13,7 +34,55 @@ html, body, #root {
   height: 100%;
   background: transparent;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Focus visible styles for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--color-cyan-electric);
+  outline-offset: 2px;
+}
+
+/* Skip link for accessibility */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  padding: 8px 16px;
+  background: var(--color-navy);
+  color: var(--color-cyan-electric);
+  z-index: 100;
+  transition: top var(--duration-normal);
+  border-radius: 0 0 4px 0;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Screen reader only */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Draggable regions */
@@ -27,7 +96,7 @@ html, body, #root {
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 4px;
+  width: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -36,7 +105,7 @@ html, body, #root {
 
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.3);
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -101,4 +170,33 @@ html, body, #root {
 
 .avatar-speaking {
   animation: glow-pulse 1.5s ease-in-out infinite;
+}
+
+/* Status ring animation */
+@keyframes ring-progress {
+  0% {
+    stroke-dashoffset: 100;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.status-ring-active {
+  animation: ring-progress 1.5s linear infinite;
+}
+
+/* Code/Monospace text */
+.font-mono {
+  font-family: 'Space Mono', Menlo, Monaco, Consolas, monospace;
+}
+
+/* Utility classes for focus management */
+.focus-trap {
+  outline: none;
+}
+
+.focus-trap:focus-within {
+  outline: 2px solid var(--color-cyan-electric);
+  outline-offset: 2px;
 }

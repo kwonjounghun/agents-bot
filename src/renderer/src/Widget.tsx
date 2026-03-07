@@ -22,6 +22,8 @@ function Widget() {
 
   // Track the current section type
   const currentSectionRef = useRef<{ id: string; type: string } | null>(null);
+  // Track reset timeout to prevent memory leak
+  const resetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Map widget message type to speech message type
   const mapMessageType = useCallback((type: WidgetMessage['type']): SpeechMessage['type'] => {
@@ -112,11 +114,16 @@ function Widget() {
       setStatus(data.status);
 
       if (data.status === 'idle') {
+        // Clear any existing timeout to prevent memory leak
+        if (resetTimeoutRef.current) {
+          clearTimeout(resetTimeoutRef.current);
+        }
         // Reset after delay to show last message
-        setTimeout(() => {
+        resetTimeoutRef.current = setTimeout(() => {
           setMessages([]);
           setIsStreaming(false);
           currentSectionRef.current = null;
+          resetTimeoutRef.current = null;
         }, 2000);
       } else if (data.status === 'complete') {
         setIsStreaming(false);
@@ -131,6 +138,10 @@ function Widget() {
       unsubMessage?.();
       unsubStatus?.();
       unsubClose?.();
+      // Clear timeout on unmount to prevent memory leak
+      if (resetTimeoutRef.current) {
+        clearTimeout(resetTimeoutRef.current);
+      }
     };
   }, [mapMessageType, generateSectionId]);
 
@@ -248,7 +259,7 @@ function Widget() {
           animate={isActive ? { scale: [1, 1.3, 1] } : {}}
           transition={{ duration: 1, repeat: Infinity }}
         />
-        <span className="text-[10px] text-white/60">
+        <span className="text-xs text-white/60">
           {getStatusText()}
         </span>
       </div>

@@ -251,7 +251,7 @@ function LeaderWidget() {
             <div className="flex items-center gap-2">
               <span className="font-bold text-white">Team Leader</span>
               {/* Leader Badge - Korean */}
-              <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-500 text-black rounded-full tracking-wider">
+              <span className="px-2 py-0.5 text-xs font-bold bg-amber-500 text-black rounded-full tracking-wider">
                 리더
               </span>
             </div>
@@ -301,7 +301,7 @@ function LeaderWidget() {
                   animate={{ scale: 1 }}
                   exit={{ scale: 0 }}
                   className={`
-                    px-2 py-1 rounded-full text-[10px] font-medium flex items-center gap-1.5
+                    px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1.5
                     ${agent.status === 'thinking' ? 'bg-yellow-500/20 text-yellow-400' :
                       agent.status === 'responding' ? 'bg-green-500/20 text-green-400' :
                       agent.status === 'using_tool' ? 'bg-blue-500/20 text-blue-400' :
