@@ -1,38 +1,52 @@
+/**
+ * Claude Agent Service
+ *
+ * This service orchestrates the Claude Agent SDK interactions.
+ * It uses composed single-responsibility modules for specific tasks.
+ */
+
 import { EventEmitter } from 'events';
 import type { QueryOptions } from '../shared/types';
+
+// Import single-responsibility modules
+import { getSDK } from './services/sdkLoader';
+import {
+  parseMessage,
+  isMessageArray,
+  type ParsedMessage
+} from './services/messageParser';
+import {
+  parseSlashCommand,
+  loadSkillDefinition,
+  buildFinalPrompt,
+  buildOmcAgentContext,
+  type ProcessedPrompt
+} from './services/promptProcessor';
+import {
+  buildBaseHooks,
+  mergeHooks,
+  buildQueryOptions,
+  type AgentStartEvent,
+  type AgentStopEvent
+} from './services/hookBuilder';
+
+// External OMC integration
 import {
   detectOMCInstallation,
   getOMCStatus,
   initializeOMC,
   createOMCHooks,
-  mergeHooks,
   getAvailableSkills,
-  type OMCStatus,
-  type SDKHooks
+  type OMCStatus
 } from './omc';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
 
 // SDK-OMC (built-in OMC implementation)
 import * as SdkOmc from '../sdk-omc';
 import type { OmcSdkOptions } from '../sdk-omc/types';
 
-// Dynamic import for ES module SDK
-let sdkModule: typeof import('@anthropic-ai/claude-agent-sdk') | null = null;
-
-async function getSDK() {
-  if (!sdkModule) {
-    sdkModule = await import('@anthropic-ai/claude-agent-sdk');
-  }
-  return sdkModule;
-}
-
 // OMC state
-let omcHooks: SDKHooks | null = null;
+let omcHooks: any = null;
 let omcInitialized = false;
-
-// SDK-OMC mode (use built-in implementation instead of external OMC)
-let useSdkOmc = false;
 
 export interface ClaudeAgentMessage {
   type: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'result' | 'error';
@@ -43,16 +57,7 @@ export interface ClaudeAgentMessage {
   turns?: number;
 }
 
-// Agent lifecycle events
-export interface AgentStartEvent {
-  agentId: string;
-  agentType: string;
-}
-
-export interface AgentStopEvent {
-  agentId: string;
-  transcriptPath?: string;
-}
+export { AgentStartEvent, AgentStopEvent };
 
 export class ClaudeAgentService extends EventEmitter {
   private abortController: AbortController | null = null;
@@ -66,11 +71,9 @@ export class ClaudeAgentService extends EventEmitter {
 
   /**
    * Enable SDK-OMC mode (use built-in OMC implementation)
-   * This is useful when external OMC is not installed or for SDK-only usage
    */
   enableSdkOmc(): void {
     this.sdkOmcEnabled = true;
-    useSdkOmc = true;
     console.log('[ClaudeAgentService] SDK-OMC mode enabled');
   }
 
@@ -96,12 +99,9 @@ export class ClaudeAgentService extends EventEmitter {
     const result = await SdkOmc.initializeOmc(cwd, { debug: true });
 
     if (result.success) {
-      // Create SDK-OMC hooks
-      const sdkOmcHooks = SdkOmc.createOmcHooks();
-      omcHooks = sdkOmcHooks as SDKHooks;
+      omcHooks = SdkOmc.createOmcHooks();
       omcInitialized = true;
       this.sdkOmcEnabled = true;
-      useSdkOmc = true;
 
       console.log('[ClaudeAgentService] SDK-OMC initialized');
       console.log(`  Agents: ${result.agents.length}`);
@@ -156,7 +156,6 @@ export class ClaudeAgentService extends EventEmitter {
     const result = await initializeOMC();
 
     if (result.success) {
-      // Create OMC hooks
       omcHooks = await createOMCHooks({
         workingDirectory: workingDirectory || this.currentWorkingDirectory,
         onSkillActivated: (skill, args) => {
@@ -168,7 +167,7 @@ export class ClaudeAgentService extends EventEmitter {
           this.emit('omcModeChanged', { mode, active });
         },
         onKeywordsDetected: (keywords) => {
-          console.log(`[ClaudeAgentService] Keywords detected: ${keywords.map(k => k.type).join(', ')}`);
+          console.log(`[ClaudeAgentService] Keywords detected: ${keywords.map((k: any) => k.type).join(', ')}`);
           this.emit('omcKeywordsDetected', { keywords });
         }
       });
@@ -190,57 +189,16 @@ export class ClaudeAgentService extends EventEmitter {
   }
 
   /**
-   * Parse slash command from prompt
-   */
-  private parseSlashCommand(prompt: string): { skill: string; args: string } | null {
-    const trimmed = prompt.trim();
-    const match = trimmed.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i);
-
-    if (!match) {
-      return null;
-    }
-
-    return {
-      skill: match[1].toLowerCase(),
-      args: match[2] || ''
-    };
-  }
-
-  /**
-   * Load skill definition from OMC
-   */
-  private loadSkillDefinition(skillName: string): string | null {
-    const installation = detectOMCInstallation();
-    if (!installation.skillsPath) return null;
-
-    const skillDir = join(installation.skillsPath, skillName);
-    const possibleFiles = ['SKILL.md', 'index.md', 'README.md'];
-
-    for (const file of possibleFiles) {
-      const filePath = join(skillDir, file);
-      if (existsSync(filePath)) {
-        try {
-          return readFileSync(filePath, 'utf-8');
-        } catch {
-          continue;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
    * Process OMC commands and return transformed prompt with skill context
    */
-  private processOMCCommand(prompt: string): { prompt: string; skillContext?: string } {
+  private processOMCCommand(prompt: string): ProcessedPrompt {
     const installation = detectOMCInstallation();
 
     if (!installation.isInstalled) {
       return { prompt };
     }
 
-    const command = this.parseSlashCommand(prompt);
+    const command = parseSlashCommand(prompt);
 
     if (!command) {
       return { prompt };
@@ -255,7 +213,7 @@ export class ClaudeAgentService extends EventEmitter {
 
     console.log(`[ClaudeAgentService] Processing skill: ${command.skill}`);
 
-    const skillDef = this.loadSkillDefinition(command.skill);
+    const skillDef = loadSkillDefinition(command.skill, installation.skillsPath || '');
     if (skillDef) {
       const skillContext = `[OMC Skill Activated: ${command.skill}]\n\n${skillDef}`;
       return {
@@ -286,7 +244,7 @@ export class ClaudeAgentService extends EventEmitter {
     console.log('[ClaudeAgentService] Working directory:', this.currentWorkingDirectory);
     console.log('[ClaudeAgentService] Model:', model || 'default');
 
-    // Initialize OMC if not already done (external or SDK-OMC)
+    // Initialize OMC if not already done
     if (!omcInitialized) {
       if (this.sdkOmcEnabled) {
         await this.initSdkOmc(this.currentWorkingDirectory);
@@ -307,100 +265,52 @@ export class ClaudeAgentService extends EventEmitter {
       const omcResult = this.processSdkOmcPrompt(rawPrompt);
       if (omcResult.suggestedMode) {
         console.log('[ClaudeAgentService] SDK-OMC mode detected:', omcResult.suggestedMode);
-        sdkOmcContext = `[SDK-OMC MODE: ${omcResult.suggestedMode.toUpperCase()}]\n`;
-      }
-      if (omcResult.suggestedAgent) {
-        console.log('[ClaudeAgentService] SDK-OMC agent suggested:', omcResult.suggestedAgent);
       }
 
-      // Add available agents context so Claude knows to use them
+      // Build OMC agent context
       const agents = this.getSdkOmcAgents();
-      const agentList = Object.entries(agents)
-        .map(([name, def]) => `- ${name}: ${def.description}`)
-        .join('\n');
-
-      sdkOmcContext += `
-<available_agents>
-When using the Task tool, use these specialized agent types:
-${agentList}
-
-Example: Task(subagent_type="executor", prompt="Implement the feature...")
-</available_agents>
-`;
+      sdkOmcContext = buildOmcAgentContext(agents, omcResult.suggestedMode || undefined);
     }
 
     try {
       const sdk = await getSDK();
       console.log('[ClaudeAgentService] SDK loaded, creating query iterator...');
 
-      // Build the final prompt with skill context and SDK-OMC context if available
-      let finalPrompt = prompt;
-      if (skillContext) {
-        finalPrompt = `${skillContext}\n\n---\n\nUser Request:\n${prompt}`;
-      }
-      // Always add SDK-OMC context when enabled (includes available agents list)
-      if (sdkOmcContext) {
-        finalPrompt = `${sdkOmcContext}\n${finalPrompt}`;
-      }
-
+      // Build the final prompt with contexts
+      const finalPrompt = buildFinalPrompt(prompt, skillContext, sdkOmcContext);
       console.log('[ClaudeAgentService] Final prompt length:', finalPrompt.length);
 
       // Build base hooks for agent tracking
-      const baseHooks: SDKHooks = {
-        SubagentStart: [{
-          hooks: [async (input: any) => {
-            // Log full input to debug agent type detection
-            console.log('[ClaudeAgentService] SubagentStart FULL INPUT:', JSON.stringify(input, null, 2));
-            console.log('[ClaudeAgentService] SubagentStart agent_type:', input.agent_type);
-            console.log('[ClaudeAgentService] SubagentStart subagent_type:', input.subagent_type);
-            console.log('[ClaudeAgentService] SubagentStart agent_id:', input.agent_id);
-
-            // Try to get the agent type from various possible fields
-            const agentType = input.subagent_type || input.agent_type || input.type || 'unknown';
-
-            this.emit('agentStart', {
-              agentId: input.agent_id,
-              agentType: agentType
-            } as AgentStartEvent);
-            return { continue: true };
-          }]
-        }],
-        SubagentStop: [{
-          hooks: [async (input: any) => {
-            console.log('[ClaudeAgentService] SubagentStop:', input.agent_id);
-            this.emit('agentStop', {
-              agentId: input.agent_id,
-              transcriptPath: input.agent_transcript_path
-            } as AgentStopEvent);
-            return { continue: true };
-          }]
-        }]
-      };
+      const baseHooks = buildBaseHooks({
+        onAgentStart: (event) => {
+          console.log('[ClaudeAgentService] SubagentStart:', event.agentType, event.agentId);
+          this.emit('agentStart', event);
+        },
+        onAgentStop: (event) => {
+          console.log('[ClaudeAgentService] SubagentStop:', event.agentId);
+          this.emit('agentStop', event);
+        }
+      });
 
       // Merge OMC hooks with base hooks
-      const finalHooks = omcHooks ? mergeHooks(baseHooks, omcHooks) : baseHooks;
+      const finalHooks = mergeHooks(baseHooks, omcHooks);
 
       // Build query options
-      const queryOptions: any = {
-        cwd: this.currentWorkingDirectory,
-        model: model,
+      const queryOpts = buildQueryOptions({
+        workingDirectory: this.currentWorkingDirectory,
+        model,
         abortController: this.abortController,
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        includePartialMessages: true,
-        pathToClaudeCodeExecutable: '/opt/homebrew/bin/claude',
-        hooks: finalHooks as any
-      };
+        hooks: finalHooks,
+        agents: this.sdkOmcEnabled ? this.getSdkOmcAgents() : undefined
+      });
 
-      // Add SDK-OMC agents if enabled
       if (this.sdkOmcEnabled) {
-        queryOptions.agents = this.getSdkOmcAgents();
-        console.log('[ClaudeAgentService] SDK-OMC agents registered:', Object.keys(queryOptions.agents).length);
+        console.log('[ClaudeAgentService] SDK-OMC agents registered:', Object.keys(queryOpts.agents || {}).length);
       }
 
       const queryIterator = sdk.query({
         prompt: finalPrompt,
-        options: queryOptions
+        options: queryOpts as any
       });
 
       console.log('[ClaudeAgentService] Query iterator created, starting message loop...');
@@ -408,7 +318,7 @@ Example: Task(subagent_type="executor", prompt="Implement the feature...")
 
       for await (const message of queryIterator) {
         messageCount++;
-        console.log('[ClaudeAgentService] Message #' + messageCount + ':', message.type, (message as any).subtype || '');
+        console.log('[ClaudeAgentService] Message #' + messageCount + ':', (message as any).type, (message as any).subtype || '');
 
         if (this.abortController?.signal.aborted) {
           console.log('[ClaudeAgentService] Query aborted');
@@ -435,76 +345,46 @@ Example: Task(subagent_type="executor", prompt="Implement the feature...")
   /**
    * Process SDK messages and emit simplified events
    */
-  private processMessage(message: any): void {
-    switch (message.type) {
-      case 'assistant':
-        // Full assistant message with content blocks
-        // NOTE: text and thinking are already streamed via stream_event, so skip them here
-        // Only process tool_use from assistant messages
-        if (message.message?.content) {
-          for (const block of message.message.content) {
-            if (block.type === 'tool_use') {
-              // Log Task tool calls to see which agent is being invoked
-              if (block.name === 'Task') {
-                console.log('[ClaudeAgentService] Task tool invoked with:', JSON.stringify(block.input, null, 2));
-              }
-              this.emit('message', {
-                type: 'tool_use',
-                content: `Using ${block.name}`,
-                toolName: block.name,
-                toolInput: JSON.stringify(block.input, null, 2)
-              } as ClaudeAgentMessage);
-            }
-          }
-        }
-        break;
+  private processMessage(message: unknown): void {
+    const parsed = parseMessage(message);
 
-      case 'stream_event':
-        // Streaming partial message
-        const event = message.event;
-        if (event?.type === 'content_block_delta') {
-          if (event.delta?.type === 'text_delta') {
-            this.emit('message', {
-              type: 'text',
-              content: event.delta.text
-            } as ClaudeAgentMessage);
-          } else if (event.delta?.type === 'thinking_delta') {
-            this.emit('message', {
-              type: 'thinking',
-              content: event.delta.thinking
-            } as ClaudeAgentMessage);
-          }
-        }
-        break;
-
-      case 'result':
-        // Query completed
-        console.log('[ClaudeAgentService] Result message full:', JSON.stringify(message, null, 2));
-        const isSuccess = message.subtype === 'success';
-        this.emit('message', {
-          type: 'result',
-          content: isSuccess ? (message.result || 'Completed') : `Error: ${message.errors?.join(', ') || 'Unknown'}`,
-          costUsd: message.total_cost_usd || 0,
-          turns: message.num_turns || 0
-        } as ClaudeAgentMessage);
-        break;
-
-      case 'user':
-        // User message (tool results, etc.) - ignore for UI
-        break;
-
-      case 'system':
-        // System messages - check for init with agents list
-        console.log('[ClaudeAgentService] System message:', message.subtype);
-        if (message.subtype === 'init' && message.agents && message.agents.length > 0) {
-          console.log('[ClaudeAgentService] Available agents:', message.agents);
-          this.emit('agentsAvailable', message.agents);
-        }
-        break;
-
-      default:
-        console.log('[ClaudeAgentService] Unknown message type:', message.type);
+    if (!parsed) {
+      return;
     }
+
+    // Handle array of messages (e.g., multiple tool uses in assistant message)
+    if (isMessageArray(parsed)) {
+      for (const msg of parsed) {
+        this.emitParsedMessage(msg);
+      }
+      return;
+    }
+
+    this.emitParsedMessage(parsed);
+  }
+
+  /**
+   * Emit a parsed message to listeners
+   */
+  private emitParsedMessage(parsed: ParsedMessage): void {
+    if (parsed.type === 'system' && parsed.agents) {
+      console.log('[ClaudeAgentService] Available agents:', parsed.agents);
+      this.emit('agentsAvailable', parsed.agents);
+      return;
+    }
+
+    if (parsed.type === 'skip') {
+      return;
+    }
+
+    this.emit('message', {
+      type: parsed.type,
+      content: parsed.content || '',
+      toolName: parsed.toolName,
+      toolInput: parsed.toolInput,
+      costUsd: parsed.costUsd,
+      turns: parsed.turns
+    } as ClaudeAgentMessage);
   }
 
   /**

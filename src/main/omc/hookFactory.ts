@@ -2,12 +2,18 @@
  * OMC Hook Factory
  *
  * Creates SDK-compatible hooks using OMC's imported modules.
- * These hooks enable keyword detection, skill loading, state management,
- * and other OMC features within the Claude Agent SDK.
+ * These hooks are thin wrappers that delegate business logic
+ * to pure functions in hookLogic.ts.
+ *
+ * Responsibilities:
+ *   - I/O operations (file reading, console logging)
+ *   - Callback invocations (onSkillActivated, onModeChanged, etc.)
+ *   - Converting HookInput to pure function parameters
+ *
+ * All business logic is in hookLogic.ts for testability.
  */
 
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
 import {
   getOMCModules,
   detectOMCInstallation,
@@ -15,6 +21,24 @@ import {
   type OMCModules,
   type DetectedKeyword
 } from './importer';
+
+// Import pure functions
+import {
+  parseSlashCommand,
+  isSkillAvailable,
+  mapKeywordToSkill,
+  buildSkillContext,
+  buildModeContext,
+  processSessionStart,
+  checkShouldPreventStop,
+  getProjectMemoryPath,
+  getSkillStatePath,
+  getModeStatePath,
+  getSkillDefinitionPaths,
+  PERSISTENT_MODES,
+  type ProjectMemory,
+  type ModeState
+} from './hookLogic';
 
 /**
  * SDK Hook types (matching @anthropic-ai/claude-agent-sdk)
@@ -84,35 +108,21 @@ export interface OMCHookOptions {
   onKeywordsDetected?: (keywords: DetectedKeyword[]) => void;
 }
 
-/**
- * Parse slash command from prompt
- */
-function parseSlashCommand(prompt: string): { skill: string; args: string } | null {
-  const trimmed = prompt.trim();
-  const match = trimmed.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i);
-
-  if (!match) {
-    return null;
-  }
-
-  return {
-    skill: match[1].toLowerCase(),
-    args: match[2] || ''
-  };
-}
+// ============================================
+// I/O Helpers (Side Effect Functions)
+// ============================================
 
 /**
- * Load skill definition from SKILL.md file
+ * Load skill definition from SKILL.md file.
+ * Side effect: file system read
  */
 function loadSkillDefinition(skillName: string): string | null {
   const installation = detectOMCInstallation();
   if (!installation.skillsPath) return null;
 
-  const skillDir = join(installation.skillsPath, skillName);
-  const possibleFiles = ['SKILL.md', 'index.md', 'README.md'];
+  const paths = getSkillDefinitionPaths(installation.skillsPath, skillName);
 
-  for (const file of possibleFiles) {
-    const filePath = join(skillDir, file);
+  for (const filePath of paths) {
     if (existsSync(filePath)) {
       try {
         return readFileSync(filePath, 'utf-8');
@@ -126,7 +136,26 @@ function loadSkillDefinition(skillName: string): string | null {
 }
 
 /**
- * Create UserPromptSubmit hook handler
+ * Read and parse JSON file safely.
+ * Side effect: file system read
+ */
+function readJsonFile<T>(filePath: string): T | null {
+  if (!existsSync(filePath)) return null;
+
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+// ============================================
+// Hook Handlers (Thin Wrappers)
+// ============================================
+
+/**
+ * Create UserPromptSubmit hook handler.
+ * Delegates to pure functions for business logic.
  */
 function createUserPromptSubmitHook(
   modules: OMCModules,
@@ -137,49 +166,51 @@ function createUserPromptSubmitHook(
   return async (input: HookInput): Promise<HookOutput> => {
     const prompt = input.prompt || '';
     let additionalContext = '';
+    let activatedSkill: string | undefined;
 
-    // 1. Check for slash command
+    // 1. Check for slash command (pure function)
     const command = parseSlashCommand(prompt);
-    if (command && availableSkills.includes(command.skill)) {
+    if (command && isSkillAvailable(command.skill, availableSkills)) {
       console.log(`[OMCHook] Detected skill command: /${command.skill}`);
 
       const skillDef = loadSkillDefinition(command.skill);
       if (skillDef) {
-        additionalContext = `[OMC Skill Activated: ${command.skill}]\n\n${skillDef}`;
+        additionalContext = buildSkillContext(command.skill, skillDef);
+        activatedSkill = command.skill;
 
+        // Side effect: callback invocation
         if (options.onSkillActivated) {
           options.onSkillActivated(command.skill, command.args);
         }
       }
     }
 
-    // 2. Detect magic keywords
-    if (modules.detectKeywordsWithType) {
+    // 2. Detect magic keywords (via OMC modules)
+    if (!activatedSkill && modules.detectKeywordsWithType) {
       try {
         const keywords = modules.detectKeywordsWithType(prompt);
 
         if (keywords && keywords.length > 0) {
           console.log('[OMCHook] Detected keywords:', keywords.map(k => k.type).join(', '));
 
+          // Side effect: callback invocation
           if (options.onKeywordsDetected) {
             options.onKeywordsDetected(keywords);
           }
 
-          // For each keyword, try to load corresponding skill
+          // Map keywords to skills (pure function)
           for (const kw of keywords) {
-            // Skip if we already loaded a skill via slash command
-            if (command) continue;
-
-            // Map keyword to skill name
             const skillName = mapKeywordToSkill(kw.type);
-            if (skillName && availableSkills.includes(skillName)) {
+            if (skillName && isSkillAvailable(skillName, availableSkills)) {
               const skillDef = loadSkillDefinition(skillName);
               if (skillDef && !additionalContext) {
-                additionalContext = `[OMC Mode: ${kw.type}]\n\n${skillDef}`;
+                additionalContext = buildModeContext(kw.type, skillDef);
 
+                // Side effect: callback invocation
                 if (options.onModeChanged) {
                   options.onModeChanged(kw.type, true);
                 }
+                break; // Only activate first matching mode
               }
             }
           }
@@ -205,31 +236,8 @@ function createUserPromptSubmitHook(
 }
 
 /**
- * Map keyword type to skill name
- */
-function mapKeywordToSkill(keywordType: string): string | null {
-  const mapping: Record<string, string> = {
-    'autopilot': 'autopilot',
-    'ralph': 'ralph',
-    'team': 'team',
-    'ultrawork': 'ultrawork',
-    'ultraqa': 'ultraqa',
-    'plan': 'plan',
-    'analyze': 'analyze',
-    'tdd': 'tdd',
-    'cancel': 'cancel',
-    'pipeline': 'pipeline',
-    'ralplan': 'ralplan',
-    'ccg': 'ccg',
-    'swarm': 'team', // swarm is alias for team
-    'ultrapilot': 'ultrapilot'
-  };
-
-  return mapping[keywordType] || null;
-}
-
-/**
- * Create SessionStart hook handler
+ * Create SessionStart hook handler.
+ * Delegates to pure functions for context building.
  */
 function createSessionStartHook(
   modules: OMCModules,
@@ -237,54 +245,41 @@ function createSessionStartHook(
 ): HookCallback {
   return async (input: HookInput): Promise<HookOutput> => {
     const cwd = input.cwd || options.workingDirectory;
-    let additionalContext = '';
 
-    // Load project memory if available
-    const projectMemoryPath = join(cwd, '.omc/project-memory.json');
-    if (existsSync(projectMemoryPath)) {
-      try {
-        const memory = JSON.parse(readFileSync(projectMemoryPath, 'utf-8'));
-        if (memory.directives && memory.directives.length > 0) {
-          additionalContext += `\n## Project Directives\n`;
-          for (const directive of memory.directives) {
-            additionalContext += `- ${directive.directive}\n`;
-          }
-        }
-        if (memory.notes && Object.keys(memory.notes).length > 0) {
-          additionalContext += `\n## Project Notes\n`;
-          for (const [category, notesList] of Object.entries(memory.notes)) {
-            if (Array.isArray(notesList) && notesList.length > 0) {
-              additionalContext += `### ${category}\n`;
-              for (const note of notesList) {
-                additionalContext += `- ${note}\n`;
-              }
-            }
-          }
-        }
-        console.log('[OMCHook] Loaded project memory');
-      } catch (error) {
-        console.error('[OMCHook] Error loading project memory:', error);
-      }
-    }
+    // Read project memory (I/O)
+    const projectMemoryPath = getProjectMemoryPath(cwd);
+    const projectMemory = readJsonFile<ProjectMemory>(projectMemoryPath);
 
-    // Check for active modes
+    // Get active modes (I/O via module)
+    let activeModes: string[] = [];
     if (modules.listActiveModes) {
       try {
-        const activeModes = await modules.listActiveModes(cwd);
-        if (activeModes && activeModes.length > 0) {
-          additionalContext += `\n## Active OMC Modes\n`;
-          for (const mode of activeModes) {
-            additionalContext += `- ${mode}\n`;
-            if (options.onModeChanged) {
-              options.onModeChanged(mode, true);
-            }
+        activeModes = await modules.listActiveModes(cwd) || [];
+
+        // Side effect: callback invocations
+        for (const mode of activeModes) {
+          if (options.onModeChanged) {
+            options.onModeChanged(mode, true);
           }
+        }
+
+        if (activeModes.length > 0) {
           console.log('[OMCHook] Active modes:', activeModes.join(', '));
         }
       } catch (error) {
         console.error('[OMCHook] Error checking active modes:', error);
       }
     }
+
+    if (projectMemory) {
+      console.log('[OMCHook] Loaded project memory');
+    }
+
+    // Build context using pure function
+    const additionalContext = processSessionStart({
+      projectMemory,
+      activeModes
+    });
 
     if (additionalContext) {
       return {
@@ -301,51 +296,42 @@ function createSessionStartHook(
 }
 
 /**
- * Create Stop hook handler (prevents premature stop during skill execution)
+ * Create Stop hook handler.
+ * Delegates to pure functions for stop prevention logic.
  */
 function createStopHook(
-  modules: OMCModules,
+  _modules: OMCModules,
   options: OMCHookOptions
 ): HookCallback {
   return async (input: HookInput): Promise<HookOutput> => {
     const cwd = input.cwd || options.workingDirectory;
 
-    // Check for active skill state
-    const skillStatePath = join(cwd, '.omc/state/skill-active-state.json');
-    if (existsSync(skillStatePath)) {
-      try {
-        const skillState = JSON.parse(readFileSync(skillStatePath, 'utf-8'));
+    // Read skill state (I/O)
+    const skillStatePath = getSkillStatePath(cwd);
+    const skillState = readJsonFile<ModeState>(skillStatePath);
 
-        if (skillState.active && skillState.reinforcement_count > 0) {
-          console.log('[OMCHook] Skill protection active:', skillState.skill_name);
-          return {
-            continue: true,
-            systemMessage: `[SKILL PROTECTION] ${skillState.skill_name} is still active. Continue working until completion.`
-          };
-        }
-      } catch (error) {
-        console.error('[OMCHook] Error reading skill state:', error);
+    // Read mode states (I/O)
+    const modeStates: Array<{ mode: string; state: ModeState }> = [];
+    for (const mode of PERSISTENT_MODES) {
+      const modePath = getModeStatePath(cwd, mode);
+      const state = readJsonFile<ModeState>(modePath);
+      if (state) {
+        modeStates.push({ mode, state });
       }
     }
 
-    // Check for active persistent modes
-    const persistentModes = ['autopilot', 'ralph', 'team', 'ultrawork'];
-    for (const mode of persistentModes) {
-      const modePath = join(cwd, `.omc/state/${mode}-state.json`);
-      if (existsSync(modePath)) {
-        try {
-          const modeState = JSON.parse(readFileSync(modePath, 'utf-8'));
-          if (modeState.active) {
-            console.log('[OMCHook] Persistent mode active:', mode);
-            return {
-              continue: true,
-              systemMessage: `[${mode.toUpperCase()} MODE ACTIVE] Continue working. Run /oh-my-claudecode:cancel when all tasks are complete.`
-            };
-          }
-        } catch {
-          continue;
-        }
-      }
+    // Check if stop should be prevented (pure function)
+    const result = checkShouldPreventStop({
+      skillState,
+      modeStates
+    });
+
+    if (result.shouldPreventStop) {
+      console.log('[OMCHook] Stop prevented:', result.reason);
+      return {
+        continue: true,
+        systemMessage: result.systemMessage
+      };
     }
 
     return { continue: true };
@@ -353,39 +339,37 @@ function createStopHook(
 }
 
 /**
- * Create SubagentStart hook handler
+ * Create SubagentStart hook handler.
  */
 function createSubagentStartHook(
-  modules: OMCModules,
-  options: OMCHookOptions
+  _modules: OMCModules,
+  _options: OMCHookOptions
 ): HookCallback {
   return async (input: HookInput): Promise<HookOutput> => {
     console.log('[OMCHook] Subagent started:', input.agent_type, input.agent_id);
-
-    // Could add tracking, widget spawning, etc.
-
     return { continue: true };
   };
 }
 
 /**
- * Create SubagentStop hook handler
+ * Create SubagentStop hook handler.
  */
 function createSubagentStopHook(
-  modules: OMCModules,
-  options: OMCHookOptions
+  _modules: OMCModules,
+  _options: OMCHookOptions
 ): HookCallback {
   return async (input: HookInput): Promise<HookOutput> => {
     console.log('[OMCHook] Subagent stopped:', input.agent_id);
-
-    // Could add cleanup, result collection, etc.
-
     return { continue: true };
   };
 }
 
+// ============================================
+// Public API
+// ============================================
+
 /**
- * Create all OMC hooks for SDK integration
+ * Create all OMC hooks for SDK integration.
  */
 export async function createOMCHooks(options: OMCHookOptions): Promise<SDKHooks | null> {
   const modules = await getOMCModules();
@@ -421,7 +405,7 @@ export async function createOMCHooks(options: OMCHookOptions): Promise<SDKHooks 
 }
 
 /**
- * Merge OMC hooks with existing hooks
+ * Merge OMC hooks with existing hooks.
  */
 export function mergeHooks(existingHooks: SDKHooks, omcHooks: SDKHooks): SDKHooks {
   const merged: SDKHooks = { ...existingHooks };
