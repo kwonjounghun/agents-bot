@@ -32,3 +32,4 @@ coverage/
 # Cache
 .cache/
 .eslintcache
+.omc/
