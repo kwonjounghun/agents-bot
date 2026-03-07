@@ -2,7 +2,7 @@
  * Claude Agent Service
  *
  * This service orchestrates the Claude Agent SDK interactions.
- * It uses composed single-responsibility modules for specific tasks.
+ * Uses composed single-responsibility modules for specific tasks.
  */
 
 import { EventEmitter } from 'events';
@@ -16,11 +16,8 @@ import {
   type ParsedMessage
 } from './services/messageParser';
 import {
-  parseSlashCommand,
-  loadSkillDefinition,
   buildFinalPrompt,
-  buildOmcAgentContext,
-  type ProcessedPrompt
+  buildOmcAgentContext
 } from './services/promptProcessor';
 import {
   buildBaseHooks,
@@ -30,28 +27,20 @@ import {
   type AgentStopEvent
 } from './services/hookBuilder';
 
-// External OMC integration
+// Composed services
 import {
-  detectOMCInstallation,
-  getOMCStatus,
-  initializeOMC,
-  createOMCHooks,
-  getAvailableSkills,
-  type OMCStatus
-} from './omc';
-
-// SDK-OMC (built-in OMC implementation)
-import * as SdkOmc from '../sdk-omc';
-import type { OmcSdkOptions, ExecutionResult, SkillMode } from '../sdk-omc/types';
+  OMCIntegration,
+  createOMCIntegration
+} from './services/omcIntegration';
 import {
-  PersistentModeExecutor,
-  createPersistentModeExecutor,
-  type QueryResult
-} from '../sdk-omc/executor';
+  PersistentModeService,
+  createPersistentModeService,
+  type QueryFunction
+} from './services/persistentModeService';
 
-// OMC state
-let omcHooks: any = null;
-let omcInitialized = false;
+// Types
+import type { ExecutionResult, SkillMode } from '../sdk-omc/types';
+import type { OMCStatus } from './omc';
 
 export interface ClaudeAgentMessage {
   type: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'result' | 'error';
@@ -70,33 +59,50 @@ export class ClaudeAgentService extends EventEmitter {
   private abortController: AbortController | null = null;
   private isRunning: boolean = false;
   private currentWorkingDirectory: string = process.cwd();
-  private sdkOmcEnabled: boolean = false;
-  private persistentExecutor: PersistentModeExecutor | null = null;
+
+  // Composed services
+  private omcIntegration: OMCIntegration;
+  private persistentModeService: PersistentModeService | null = null;
+
+  // For persistent mode query accumulation
   private lastQueryResponse: string = '';
   private lastToolsUsed: string[] = [];
 
   constructor() {
     super();
+    this.omcIntegration = createOMCIntegration({
+      workingDirectory: this.currentWorkingDirectory
+    });
+    this.setupOMCEventForwarding();
   }
 
   /**
-   * Enable SDK-OMC mode (use built-in OMC implementation)
+   * Setup OMC event forwarding to service listeners
    */
+  private setupOMCEventForwarding(): void {
+    this.omcIntegration.on('skillActivated', (data) => {
+      this.emit('omcSkillActivated', data);
+    });
+    this.omcIntegration.on('modeChanged', (data) => {
+      this.emit('omcModeChanged', data);
+    });
+    this.omcIntegration.on('keywordsDetected', (data) => {
+      this.emit('omcKeywordsDetected', data);
+    });
+  }
+
+  // ============================================
+  // OMC Integration (delegated to OMCIntegration)
+  // ============================================
+
   enableSdkOmc(): void {
-    this.sdkOmcEnabled = true;
-    console.log('[ClaudeAgentService] SDK-OMC mode enabled');
+    this.omcIntegration.enable();
   }
 
-  /**
-   * Check if SDK-OMC mode is enabled
-   */
   isSdkOmcEnabled(): boolean {
-    return this.sdkOmcEnabled;
+    return this.omcIntegration.isEnabled();
   }
 
-  /**
-   * Initialize SDK-OMC (built-in implementation)
-   */
   async initSdkOmc(workingDirectory?: string): Promise<{
     success: boolean;
     activeModes: string[];
@@ -104,136 +110,39 @@ export class ClaudeAgentService extends EventEmitter {
     skills: string[];
   }> {
     const cwd = workingDirectory || this.currentWorkingDirectory;
-    console.log('[ClaudeAgentService] Initializing SDK-OMC...');
-
-    const result = await SdkOmc.initializeOmc(cwd, { debug: true });
-
-    if (result.success) {
-      omcHooks = SdkOmc.createOmcHooks();
-      omcInitialized = true;
-      this.sdkOmcEnabled = true;
-
-      console.log('[ClaudeAgentService] SDK-OMC initialized');
-      console.log(`  Agents: ${result.agents.length}`);
-      console.log(`  Skills: ${result.skills.length}`);
-      console.log(`  Active modes: ${result.activeModes.join(', ') || 'none'}`);
-    }
-
-    return result;
+    this.omcIntegration.setWorkingDirectory(cwd);
+    return this.omcIntegration.initializeSdk(cwd);
   }
 
-  /**
-   * Get SDK-OMC query options for direct SDK usage
-   */
-  getSdkOmcQueryOptions(options: OmcSdkOptions = {}): ReturnType<typeof SdkOmc.createOmcQueryOptions> {
-    return SdkOmc.createOmcQueryOptions({
-      workingDirectory: this.currentWorkingDirectory,
-      ...options
-    });
+  getSdkOmcQueryOptions(options = {}): ReturnType<typeof this.omcIntegration.getQueryOptions> {
+    return this.omcIntegration.getQueryOptions(options);
   }
 
-  /**
-   * Process prompt using SDK-OMC keyword detection
-   */
-  processSdkOmcPrompt(prompt: string): ReturnType<typeof SdkOmc.processOmcPrompt> {
-    return SdkOmc.processOmcPrompt(prompt);
+  processSdkOmcPrompt(prompt: string): ReturnType<typeof this.omcIntegration.processPrompt> {
+    return this.omcIntegration.processPrompt(prompt);
   }
 
-  /**
-   * Get SDK-OMC status
-   */
-  async getSdkOmcStatus(): Promise<Awaited<ReturnType<typeof SdkOmc.getOmcStatus>>> {
-    return SdkOmc.getOmcStatus(this.currentWorkingDirectory);
+  async getSdkOmcStatus(): Promise<Awaited<ReturnType<typeof this.omcIntegration.getStatus>>> {
+    return this.omcIntegration.getStatus();
   }
 
-  /**
-   * Get SDK-OMC agents for subagent configuration
-   */
-  getSdkOmcAgents(): typeof SdkOmc.omcAgents {
-    return SdkOmc.omcAgents;
+  getSdkOmcAgents(): ReturnType<typeof this.omcIntegration.getAgents> {
+    return this.omcIntegration.getAgents();
   }
 
-  /**
-   * Initialize OMC modules and hooks
-   */
   async initOMC(workingDirectory?: string): Promise<OMCStatus> {
-    if (omcInitialized && omcHooks) {
-      return getOMCStatus(workingDirectory || this.currentWorkingDirectory);
-    }
-
-    console.log('[ClaudeAgentService] Initializing OMC...');
-
-    const result = await initializeOMC();
-
-    if (result.success) {
-      omcHooks = await createOMCHooks({
-        workingDirectory: workingDirectory || this.currentWorkingDirectory,
-        onSkillActivated: (skill, args) => {
-          console.log(`[ClaudeAgentService] Skill activated: ${skill}`);
-          this.emit('omcSkillActivated', { skill, args });
-        },
-        onModeChanged: (mode, active) => {
-          console.log(`[ClaudeAgentService] Mode changed: ${mode} (${active ? 'active' : 'inactive'})`);
-          this.emit('omcModeChanged', { mode, active });
-        },
-        onKeywordsDetected: (keywords) => {
-          console.log(`[ClaudeAgentService] Keywords detected: ${keywords.map((k: any) => k.type).join(', ')}`);
-          this.emit('omcKeywordsDetected', { keywords });
-        }
-      });
-
-      omcInitialized = true;
-      console.log('[ClaudeAgentService] OMC initialized:', result.status.version);
-    } else {
-      console.log('[ClaudeAgentService] OMC initialization failed:', result.error);
-    }
-
-    return result.status;
+    const cwd = workingDirectory || this.currentWorkingDirectory;
+    this.omcIntegration.setWorkingDirectory(cwd);
+    return this.omcIntegration.initializeExternal(cwd);
   }
 
-  /**
-   * Get OMC status for UI display
-   */
   getOMCStatus(workingDirectory?: string): OMCStatus {
-    return getOMCStatus(workingDirectory || this.currentWorkingDirectory);
+    return this.omcIntegration.getExternalStatus(workingDirectory || this.currentWorkingDirectory);
   }
 
-  /**
-   * Process OMC commands and return transformed prompt with skill context
-   */
-  private processOMCCommand(prompt: string): ProcessedPrompt {
-    const installation = detectOMCInstallation();
-
-    if (!installation.isInstalled) {
-      return { prompt };
-    }
-
-    const command = parseSlashCommand(prompt);
-
-    if (!command) {
-      return { prompt };
-    }
-
-    const availableSkills = getAvailableSkills(installation);
-
-    if (!availableSkills.includes(command.skill)) {
-      console.log(`[ClaudeAgentService] Unknown skill: ${command.skill}`);
-      return { prompt };
-    }
-
-    console.log(`[ClaudeAgentService] Processing skill: ${command.skill}`);
-
-    const skillDef = loadSkillDefinition(command.skill, installation.skillsPath || '');
-    if (skillDef) {
-      const skillContext = `[OMC Skill Activated: ${command.skill}]\n\n${skillDef}`;
-      return {
-        prompt: command.args || `Execute the ${command.skill} skill`,
-        skillContext
-      };
-    }
-
-    return { prompt: command.args || prompt };
-  }
+  // ============================================
+  // Core Query Execution
+  // ============================================
 
   /**
    * Send a query to Claude Agent SDK and stream responses
@@ -249,36 +158,37 @@ export class ClaudeAgentService extends EventEmitter {
 
     const { prompt: rawPrompt, workingDirectory, model } = options;
     this.currentWorkingDirectory = workingDirectory || process.cwd();
+    this.omcIntegration.setWorkingDirectory(this.currentWorkingDirectory);
 
     console.log('[ClaudeAgentService] Starting query');
     console.log('[ClaudeAgentService] Working directory:', this.currentWorkingDirectory);
     console.log('[ClaudeAgentService] Model:', model || 'default');
 
     // Initialize OMC if not already done
-    if (!omcInitialized) {
-      if (this.sdkOmcEnabled) {
-        await this.initSdkOmc(this.currentWorkingDirectory);
+    if (!this.omcIntegration.isInitialized()) {
+      if (this.omcIntegration.isEnabled()) {
+        await this.omcIntegration.initializeSdk(this.currentWorkingDirectory);
       } else {
-        await this.initOMC(this.currentWorkingDirectory);
+        await this.omcIntegration.initializeExternal(this.currentWorkingDirectory);
       }
     }
 
     // Process OMC commands (skill loading)
-    const { prompt, skillContext } = this.processOMCCommand(rawPrompt);
+    const { prompt, skillContext } = this.omcIntegration.processCommand(rawPrompt);
     if (skillContext) {
       console.log('[ClaudeAgentService] OMC skill context loaded');
     }
 
     // Process SDK-OMC keywords if enabled
     let sdkOmcContext = '';
-    if (this.sdkOmcEnabled) {
-      const omcResult = this.processSdkOmcPrompt(rawPrompt);
+    if (this.omcIntegration.isEnabled()) {
+      const omcResult = this.omcIntegration.processPrompt(rawPrompt);
       if (omcResult.suggestedMode) {
         console.log('[ClaudeAgentService] SDK-OMC mode detected:', omcResult.suggestedMode);
       }
 
       // Build OMC agent context
-      const agents = this.getSdkOmcAgents();
+      const agents = this.omcIntegration.getAgents();
       sdkOmcContext = buildOmcAgentContext(agents, omcResult.suggestedMode || undefined);
     }
 
@@ -303,7 +213,7 @@ export class ClaudeAgentService extends EventEmitter {
       });
 
       // Merge OMC hooks with base hooks
-      const finalHooks = mergeHooks(baseHooks, omcHooks);
+      const finalHooks = mergeHooks(baseHooks, this.omcIntegration.getHooks());
 
       // Build query options
       const queryOpts = buildQueryOptions({
@@ -311,10 +221,10 @@ export class ClaudeAgentService extends EventEmitter {
         model,
         abortController: this.abortController,
         hooks: finalHooks,
-        agents: this.sdkOmcEnabled ? this.getSdkOmcAgents() : undefined
+        agents: this.omcIntegration.isEnabled() ? this.omcIntegration.getAgents() : undefined
       });
 
-      if (this.sdkOmcEnabled) {
+      if (this.omcIntegration.isEnabled()) {
         console.log('[ClaudeAgentService] SDK-OMC agents registered:', Object.keys(queryOpts.agents || {}).length);
       }
 
@@ -362,7 +272,7 @@ export class ClaudeAgentService extends EventEmitter {
       return;
     }
 
-    // Handle array of messages (e.g., multiple tool uses in assistant message)
+    // Handle array of messages
     if (isMessageArray(parsed)) {
       for (const msg of parsed) {
         this.emitParsedMessage(msg);
@@ -416,9 +326,12 @@ export class ClaudeAgentService extends EventEmitter {
     return this.isRunning;
   }
 
+  // ============================================
+  // Persistent Mode Execution
+  // ============================================
+
   /**
    * Execute a persistent mode (Ralph, Autopilot, etc.)
-   * This implements the persistent execution loop that continues until completion.
    */
   async executePersistentMode(
     mode: SkillMode,
@@ -426,122 +339,108 @@ export class ClaudeAgentService extends EventEmitter {
     options?: { maxIterations?: number; requireVerification?: boolean }
   ): Promise<ExecutionResult> {
     // Initialize OMC if needed
-    if (!omcInitialized && this.sdkOmcEnabled) {
-      await this.initSdkOmc(this.currentWorkingDirectory);
+    if (!this.omcIntegration.isInitialized() && this.omcIntegration.isEnabled()) {
+      await this.omcIntegration.initializeSdk(this.currentWorkingDirectory);
     }
 
-    // Create executor if not exists
-    if (!this.persistentExecutor) {
-      this.persistentExecutor = createPersistentModeExecutor(
-        this.currentWorkingDirectory,
-        this.createQueryFunction(),
-        options
+    // Create persistent mode service if not exists
+    if (!this.persistentModeService) {
+      this.persistentModeService = createPersistentModeService(
+        {
+          workingDirectory: this.currentWorkingDirectory,
+          ...options
+        },
+        this.createQueryFunction()
       );
 
-      // Forward executor events
-      this.persistentExecutor.on('modeStarted', (data) => {
-        this.emit('persistentModeStarted', data);
-        this.emit('message', {
-          type: 'text',
-          content: `[${mode.toUpperCase()}] Started - ${task}`
-        } as ClaudeAgentMessage);
-      });
-
-      this.persistentExecutor.on('iterationStarted', (data) => {
-        this.emit('persistentIterationStarted', data);
-        this.emit('message', {
-          type: 'text',
-          content: `[${mode.toUpperCase()}] Iteration ${data.iteration}/${data.maxIterations}`
-        } as ClaudeAgentMessage);
-      });
-
-      this.persistentExecutor.on('iterationCompleted', (data) => {
-        this.emit('persistentIterationCompleted', data);
-      });
-
-      this.persistentExecutor.on('completionChecked', (data) => {
-        this.emit('persistentCompletionChecked', data);
-        if (data.checkResult.isComplete) {
-          this.emit('message', {
-            type: 'text',
-            content: `[${mode.toUpperCase()}] Completion detected, verifying...`
-          } as ClaudeAgentMessage);
-        }
-      });
-
-      this.persistentExecutor.on('verificationCompleted', (data) => {
-        this.emit('persistentVerificationCompleted', data);
-        this.emit('message', {
-          type: 'text',
-          content: `[${mode.toUpperCase()}] Verification: ${data.approved ? 'APPROVED' : 'REJECTED'}`
-        } as ClaudeAgentMessage);
-      });
-
-      this.persistentExecutor.on('modeCompleted', (data) => {
-        this.emit('persistentModeCompleted', data);
-        this.emit('message', {
-          type: 'result',
-          content: `[${mode.toUpperCase()}] Completed after ${data.iteration} iterations`
-        } as ClaudeAgentMessage);
-      });
-
-      this.persistentExecutor.on('modeEnded', (data) => {
-        this.emit('persistentModeEnded', data);
-      });
+      // Forward events with message emission
+      this.setupPersistentModeEventForwarding(mode);
     }
 
-    // Execute the appropriate mode
-    switch (mode) {
-      case 'ralph':
-        return this.persistentExecutor.executeRalph(task);
-      case 'autopilot':
-        return this.persistentExecutor.executeAutopilot(task);
-      default:
-        return {
-          success: false,
-          mode,
-          iterations: 0,
-          error: `Persistent execution not implemented for mode: ${mode}`
-        };
-    }
+    return this.persistentModeService.execute(mode, task, options);
   }
 
   /**
-   * Execute Ralph mode - persistent loop until task completion
+   * Setup persistent mode event forwarding
    */
+  private setupPersistentModeEventForwarding(mode: SkillMode): void {
+    if (!this.persistentModeService) return;
+
+    this.persistentModeService.on('modeStarted', (data) => {
+      this.emit('persistentModeStarted', data);
+      this.emit('message', {
+        type: 'text',
+        content: `[${mode.toUpperCase()}] Started - ${data.task}`
+      } as ClaudeAgentMessage);
+    });
+
+    this.persistentModeService.on('iterationStarted', (data) => {
+      this.emit('persistentIterationStarted', data);
+      this.emit('message', {
+        type: 'text',
+        content: `[${mode.toUpperCase()}] Iteration ${data.iteration}/${data.maxIterations}`
+      } as ClaudeAgentMessage);
+    });
+
+    this.persistentModeService.on('iterationCompleted', (data) => {
+      this.emit('persistentIterationCompleted', data);
+    });
+
+    this.persistentModeService.on('completionChecked', (data) => {
+      this.emit('persistentCompletionChecked', data);
+      if (data.checkResult.isComplete) {
+        this.emit('message', {
+          type: 'text',
+          content: `[${mode.toUpperCase()}] Completion detected, verifying...`
+        } as ClaudeAgentMessage);
+      }
+    });
+
+    this.persistentModeService.on('verificationCompleted', (data) => {
+      this.emit('persistentVerificationCompleted', data);
+      this.emit('message', {
+        type: 'text',
+        content: `[${mode.toUpperCase()}] Verification: ${data.approved ? 'APPROVED' : 'REJECTED'}`
+      } as ClaudeAgentMessage);
+    });
+
+    this.persistentModeService.on('modeCompleted', (data) => {
+      this.emit('persistentModeCompleted', data);
+      this.emit('message', {
+        type: 'result',
+        content: `[${mode.toUpperCase()}] Completed after ${data.iteration} iterations`
+      } as ClaudeAgentMessage);
+    });
+
+    this.persistentModeService.on('modeEnded', (data) => {
+      this.emit('persistentModeEnded', data);
+    });
+  }
+
   async executeRalph(task: string): Promise<ExecutionResult> {
     return this.executePersistentMode('ralph', task);
   }
 
-  /**
-   * Execute Autopilot mode - full autonomous execution
-   */
   async executeAutopilot(goal: string): Promise<ExecutionResult> {
     return this.executePersistentMode('autopilot', goal);
   }
 
-  /**
-   * Stop persistent mode execution
-   */
   stopPersistentMode(): void {
-    if (this.persistentExecutor) {
-      this.persistentExecutor.stop();
+    if (this.persistentModeService) {
+      this.persistentModeService.stop();
     }
     this.stop();
   }
 
-  /**
-   * Check if persistent mode is running
-   */
   isPersistentModeRunning(): boolean {
-    return this.persistentExecutor?.getIsRunning() || false;
+    return this.persistentModeService?.isRunning() || false;
   }
 
   /**
    * Create a query function for the persistent executor
    */
-  private createQueryFunction(): (prompt: string) => Promise<QueryResult> {
-    return async (prompt: string): Promise<QueryResult> => {
+  private createQueryFunction(): QueryFunction {
+    return async (prompt: string) => {
       this.lastQueryResponse = '';
       this.lastToolsUsed = [];
 
@@ -569,7 +468,6 @@ export class ClaudeAgentService extends EventEmitter {
 
         this.on('message', messageHandler);
 
-        // Execute query
         this.query({
           prompt,
           workingDirectory: this.currentWorkingDirectory

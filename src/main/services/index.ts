@@ -92,3 +92,33 @@ export {
   type WidgetManagerInterface,
   type AgentStatus
 } from './widgetRouter';
+
+// OMC Integration
+export {
+  OMCIntegration,
+  createOMCIntegration,
+  type OMCIntegrationConfig
+} from './omcIntegration';
+
+// Persistent Mode Service
+export {
+  PersistentModeService,
+  createPersistentModeService,
+  type PersistentModeConfig,
+  type QueryFunction
+} from './persistentModeService';
+
+// Window Manager
+export {
+  WindowManagerService,
+  createWindowManager,
+  type WindowManagerConfig
+} from './windowManager';
+
+// Message Router Service
+export {
+  MessageRouterService,
+  createMessageRouterService,
+  type MessageRouterConfig,
+  type MessageIdState
+} from './messageRouterService';
