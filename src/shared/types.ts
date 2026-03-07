@@ -3,6 +3,33 @@
 // Message types from SDK responses
 export type MessageType = 'text' | 'thinking' | 'tool_use' | 'result' | 'error';
 
+// Agent team types - dynamic, any string role name is allowed
+export type AgentRole = string;
+
+export interface AgentWidget {
+  id: string;
+  role: AgentRole;
+  windowId: number;
+  position: { x: number; y: number };
+  isActive: boolean;
+}
+
+export interface AgentTeam {
+  id: string;
+  name: string;
+  agents: AgentWidget[];
+  status: 'idle' | 'active' | 'complete';
+}
+
+// Widget-specific message
+export interface WidgetMessage {
+  agentId: string;
+  role: AgentRole;
+  type: 'thinking' | 'speaking' | 'tool_use' | 'complete';
+  content: string;
+  timestamp: number;
+}
+
 // Simplified agent message for UI display
 export interface AgentMessage {
   id: string;
@@ -49,4 +76,13 @@ export interface QueryOptions {
   prompt: string;
   workingDirectory?: string;
   model?: string;
+}
+
+// OMC Status for UI display
+export interface OMCStatusInfo {
+  installed: boolean;
+  version: string | null;
+  skillCount: number;
+  skills: string[];
+  activeModes: string[];
 }

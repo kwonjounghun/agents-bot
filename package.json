@@ -16,9 +16,15 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "ajv": "^6.14.0",
+    "chalk": "^5.6.2",
     "framer-motion": "^11.0.0",
+    "jsonc-parser": "^3.3.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "safe-regex": "^2.1.1",
+    "vscode-languageserver-protocol": "^3.17.5",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

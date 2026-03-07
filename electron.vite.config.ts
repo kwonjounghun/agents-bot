@@ -24,6 +24,10 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/preload/index.ts'),
+          widgetPreload: resolve(__dirname, 'src/preload/widgetPreload.ts')
+        },
         external: ['electron'],
         output: {
           format: 'cjs'
@@ -36,7 +40,8 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/renderer/index.html')
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          widget: resolve(__dirname, 'src/renderer/widget.html')
         }
       }
     },

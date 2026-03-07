@@ -1,13 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
-import './index.css';
+import Widget from './Widget';
+import './widget.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <Widget />
   </React.StrictMode>
 );
-
-// Notify main process that window is ready
-window.claudeAPI?.notifyReady();
