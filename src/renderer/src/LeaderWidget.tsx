@@ -1,5 +1,13 @@
 /**
- * Leader Widget Component (New Version)
+ * Leader Widget Component (Legacy)
+ *
+ * @deprecated Use `src/renderer/src/leader/LeaderWidget.tsx` instead.
+ *
+ * This file is kept for backward compatibility.
+ * The new implementation provides better separation of concerns:
+ * - Data Layer: Stream-based data from ClaudeAgentService SDK
+ * - Business Logic: useLeaderState, useLeaderMessages, useSubagentTracking
+ * - View Layer: LeaderWidget components
  *
  * Team Leader agent widget with "리더" badge and command input.
  * Displays leader status with accumulating messages and manages sub-agent overview.

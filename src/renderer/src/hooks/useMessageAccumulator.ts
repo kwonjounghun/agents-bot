@@ -1,5 +1,9 @@
 /**
- * useMessageAccumulator Hook
+ * useMessageAccumulator Hook (Legacy)
+ *
+ * @deprecated Use `src/renderer/src/shared/hooks/useMessageAccumulator.ts` instead.
+ *
+ * This file is kept for backward compatibility.
  *
  * Shared hook for accumulating messages into sections.
  * Used by both Widget.tsx and LeaderWidget.tsx.

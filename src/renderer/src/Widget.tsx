@@ -1,5 +1,13 @@
 /**
- * Widget Component (New Version)
+ * Widget Component (Legacy)
+ *
+ * @deprecated Use `src/renderer/src/subagent/SubagentWidget.tsx` instead.
+ *
+ * This file is kept for backward compatibility.
+ * The new implementation provides better separation of concerns:
+ * - Data Layer: Polling-based data from TranscriptWatcher (claude-esp style)
+ * - Business Logic: useSubagentState, useSubagentMessages
+ * - View Layer: SubagentWidget components
  *
  * Sub-agent widget with accumulating speech bubbles.
  * Key feature: Messages accumulate and never replace -
