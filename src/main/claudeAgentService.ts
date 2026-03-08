@@ -65,10 +65,6 @@ export class ClaudeAgentService extends EventEmitter {
   private omcIntegration: OMCIntegration;
   private persistentModeService: PersistentModeService | null = null;
 
-  // For persistent mode query accumulation
-  private lastQueryResponse: string = '';
-  private lastToolsUsed: string[] = [];
-
   constructor() {
     super();
     this.omcIntegration = createOMCIntegration({
@@ -456,29 +452,32 @@ export class ClaudeAgentService extends EventEmitter {
 
   /**
    * Create a query function for the persistent executor
+   * Uses local variables instead of instance properties to prevent
+   * shared state corruption across concurrent persistent mode iterations
    */
   private createQueryFunction(): QueryFunction {
     return async (prompt: string) => {
-      this.lastQueryResponse = '';
-      this.lastToolsUsed = [];
+      // Use local variables scoped to this invocation (not instance properties)
+      let queryResponse = '';
+      const toolsUsed: string[] = [];
 
       return new Promise((resolve) => {
         const messageHandler = (msg: ClaudeAgentMessage) => {
           if (msg.type === 'text' || msg.type === 'thinking') {
-            this.lastQueryResponse += msg.content;
+            queryResponse += msg.content;
           }
           if (msg.type === 'tool_use' && msg.toolName) {
-            this.lastToolsUsed.push(msg.toolName);
+            toolsUsed.push(msg.toolName);
           }
           if (msg.type === 'result') {
-            this.lastQueryResponse += msg.content;
+            queryResponse += msg.content;
           }
           if (msg.type === 'error') {
             this.removeListener('message', messageHandler);
             resolve({
               success: false,
-              response: this.lastQueryResponse,
-              toolsUsed: this.lastToolsUsed,
+              response: queryResponse,
+              toolsUsed,
               error: msg.content
             });
           }
@@ -493,15 +492,15 @@ export class ClaudeAgentService extends EventEmitter {
           this.removeListener('message', messageHandler);
           resolve({
             success: true,
-            response: this.lastQueryResponse,
-            toolsUsed: this.lastToolsUsed
+            response: queryResponse,
+            toolsUsed
           });
         }).catch((error) => {
           this.removeListener('message', messageHandler);
           resolve({
             success: false,
-            response: this.lastQueryResponse,
-            toolsUsed: this.lastToolsUsed,
+            response: queryResponse,
+            toolsUsed,
             error: error instanceof Error ? error.message : 'Unknown error'
           });
         });

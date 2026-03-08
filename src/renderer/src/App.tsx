@@ -8,12 +8,15 @@
 import React from 'react';
 import { TeamsProvider } from './contexts/TeamsContext';
 import { MainLayout } from './layouts/MainLayout';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function App() {
   return (
-    <TeamsProvider>
-      <MainLayout />
-    </TeamsProvider>
+    <ErrorBoundary>
+      <TeamsProvider>
+        <MainLayout />
+      </TeamsProvider>
+    </ErrorBoundary>
   );
 }
 

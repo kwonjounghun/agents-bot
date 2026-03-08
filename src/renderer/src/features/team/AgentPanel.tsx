@@ -4,7 +4,7 @@
  * Individual agent panel showing status and messages.
  */
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Agent } from '../../contexts/TeamsContext';
 import { getAgentConfig } from '../../../../shared/agentTypes';
@@ -13,14 +13,15 @@ interface AgentPanelProps {
   agent: Agent;
 }
 
-export function AgentPanel({ agent }: AgentPanelProps) {
+export const AgentPanel = memo(function AgentPanel({ agent }: AgentPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const config = getAgentConfig(agent.role);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom only when new messages are added (not on content updates)
+  const messageCount = agent.messages.length;
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [agent.messages]);
+  }, [messageCount]);
 
   const getStatusColor = () => {
     switch (agent.status) {
@@ -98,9 +99,9 @@ export function AgentPanel({ agent }: AgentPanelProps) {
       </div>
     </motion.div>
   );
-}
+});
 
-function MessageBubble({ message }: { message: Agent['messages'][0] }) {
+const MessageBubble = memo(function MessageBubble({ message }: { message: Agent['messages'][0] }) {
   const getStyle = () => {
     switch (message.type) {
       case 'thinking':
@@ -128,9 +129,10 @@ function MessageBubble({ message }: { message: Agent['messages'][0] }) {
 
   return (
     <div className={`p-2 rounded-lg border text-xs ${getStyle()}`}>
-      {getIcon() && (
-        <span className="mr-1">{getIcon()}</span>
-      )}
+      {(() => {
+        const icon = getIcon();
+        return icon ? <span className="mr-1">{icon}</span> : null;
+      })()}
       <span className="whitespace-pre-wrap break-words">
         {message.content.length > 500
           ? message.content.slice(0, 500) + '...'
@@ -142,4 +144,4 @@ function MessageBubble({ message }: { message: Agent['messages'][0] }) {
       )}
     </div>
   );
-}
+});

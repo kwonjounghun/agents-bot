@@ -5,7 +5,7 @@
  * Provides team data and actions to all components.
  */
 
-import React, { createContext, useContext, useReducer, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import type { AgentStatus, AgentMessage } from '../../../shared/types';
 
 // Types
@@ -260,10 +260,20 @@ export function TeamsProvider({ children }: { children: ReactNode }) {
     window.teamAPI?.sendCommand(teamId, command);
   }, []);
 
-  const activeTeam = state.activeTeamId ? state.teams.get(state.activeTeamId) || null : null;
+  // Memoize activeTeam to prevent unnecessary recalculations
+  const activeTeam = useMemo(
+    () => state.activeTeamId ? state.teams.get(state.activeTeamId) || null : null,
+    [state.activeTeamId, state.teams]
+  );
+
+  // Memoize context value to prevent all consumers from re-rendering on every state change
+  const contextValue = useMemo(
+    () => ({ state, activeTeam, createTeam, deleteTeam, setActiveTeam, sendCommand }),
+    [state, activeTeam, createTeam, deleteTeam, setActiveTeam, sendCommand]
+  );
 
   return (
-    <TeamsContext.Provider value={{ state, activeTeam, createTeam, deleteTeam, setActiveTeam, sendCommand }}>
+    <TeamsContext.Provider value={contextValue}>
       {children}
     </TeamsContext.Provider>
   );

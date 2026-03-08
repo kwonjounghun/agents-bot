@@ -4,10 +4,10 @@
  * Main content area displaying the selected team's agents in a grid.
  */
 
-import React from 'react';
 import { useTeams } from '../../contexts/TeamsContext';
 import { AgentGrid } from './AgentGrid';
 import { TeamInput } from './TeamInput';
+import type { AgentStatus } from '../../../../shared/types';
 
 export function TeamView() {
   const { activeTeam } = useTeams();
@@ -79,12 +79,12 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-interface Agent {
+interface StopButtonAgent {
   id: string;
-  status: string;
+  status: AgentStatus;
 }
 
-function StopButton({ teamId, agents }: { teamId: string; agents: Agent[] }) {
+function StopButton({ teamId, agents }: { teamId: string; agents: StopButtonAgent[] }) {
   // Show stop button if any agent is processing
   const isAnyAgentProcessing = agents.some(
     (agent) =>
@@ -98,7 +98,7 @@ function StopButton({ teamId, agents }: { teamId: string; agents: Agent[] }) {
   }
 
   const handleStop = () => {
-    window.teamAPI.stopAllAgents(teamId);
+    window.teamAPI?.stopAllAgents(teamId);
   };
 
   return (

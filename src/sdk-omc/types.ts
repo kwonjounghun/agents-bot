@@ -137,6 +137,14 @@ export interface RoutingConfig {
   simplificationKeywords?: string[];
 }
 
+// Stage history entry for team pipeline
+export interface StageHistoryEntry {
+  stage: string;
+  startedAt: string;
+  completedAt?: string;
+  status: 'running' | 'completed' | 'failed';
+}
+
 // Team state (for team skill)
 export interface TeamState extends ModeState {
   teamName?: string;
@@ -144,7 +152,8 @@ export interface TeamState extends ModeState {
   agentTypes?: string;
   fixLoopCount?: number;
   maxFixLoops?: number;
-  stageHistory?: string;
+  /** Stage history - can be string (legacy) or structured array */
+  stageHistory?: string | StageHistoryEntry[];
 }
 
 // Ralph state (for ralph skill)

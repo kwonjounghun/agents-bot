@@ -11,8 +11,9 @@
  * field embedded in each JSONL line (claude-esp style).
  */
 
-import { readFile, stat, readdir } from 'fs/promises';
+import { open, stat, readdir } from 'fs/promises';
 import { join } from 'path';
+import type { FileHandle } from 'fs/promises';
 import { parseTranscriptLine, type TranscriptMessage } from './parsers/transcriptLineParser';
 import { getSubagentsDir } from './utils/claudeProjectPaths';
 
@@ -29,6 +30,8 @@ interface WatcherState {
   filePath: string;
   agentId: string;
   isActive: boolean;
+  /** Partial line buffer for handling incomplete reads */
+  partialLine: string;
 }
 
 /**
@@ -76,11 +79,15 @@ export class TranscriptWatcher {
   private workingDirectory: string;
   private pollInterval: NodeJS.Timeout | null = null;
   private readonly POLL_INTERVAL_MS = 500;
+  private readonly DIR_SCAN_INTERVAL_MS = 5000; // Scan for new files every 5s
 
   // Cached subagents directory
   private subagentsDir: string | null = null;
   // Track active (not stopped) agents
   private activeAgents: Set<string> = new Set();
+  // Cached file list to avoid readdir on every poll
+  private cachedFiles: Set<string> = new Set();
+  private lastDirScan: number = 0;
 
   constructor(callbacks: TranscriptWatcherCallbacks, workingDirectory: string) {
     this.callbacks = callbacks;
@@ -161,21 +168,34 @@ export class TranscriptWatcher {
 
   /**
    * Poll all subagent files for new content
+   * Optimized: only re-scan directory periodically, not on every poll
    */
   private async pollAllFiles(): Promise<void> {
     if (!this.subagentsDir) return;
 
-    const files = await getAgentFiles(this.subagentsDir);
+    const now = Date.now();
 
-    for (const fileInfo of files) {
-      await this.checkFileForNewContent(fileInfo.path);
+    // Only re-scan directory periodically to find new files
+    if (now - this.lastDirScan > this.DIR_SCAN_INTERVAL_MS) {
+      const files = await getAgentFiles(this.subagentsDir);
+      for (const fileInfo of files) {
+        this.cachedFiles.add(fileInfo.path);
+      }
+      this.lastDirScan = now;
     }
+
+    // Process cached files in parallel for better performance
+    const filePaths = Array.from(this.cachedFiles);
+    await Promise.all(filePaths.map(path => this.checkFileForNewContent(path)));
   }
 
   /**
    * Check a file for new content and emit messages with embedded agentId
+   * Optimized: Read only new bytes from last position, not entire file
    */
   private async checkFileForNewContent(filePath: string): Promise<void> {
+    let fileHandle: FileHandle | null = null;
+
     try {
       const stats = await stat(filePath);
       const fileSize = stats.size;
@@ -187,7 +207,8 @@ export class TranscriptWatcher {
           lastPosition: 0,
           filePath,
           agentId: '', // Not used - agentId comes from JSONL content
-          isActive: true
+          isActive: true,
+          partialLine: ''
         };
         this.fileStates.set(filePath, fileState);
       }
@@ -196,18 +217,26 @@ export class TranscriptWatcher {
         return; // No new content
       }
 
-      // Read new content
-      const content = await readFile(filePath, 'utf-8');
-      const lines = content.split('\n');
+      // Read only new bytes from the last position
+      const bytesToRead = fileSize - fileState.lastPosition;
+      const buffer = Buffer.alloc(bytesToRead);
 
-      // Process new lines
-      let currentPosition = 0;
+      fileHandle = await open(filePath, 'r');
+      await fileHandle.read(buffer, 0, bytesToRead, fileState.lastPosition);
+      await fileHandle.close();
+      fileHandle = null;
+
+      // Combine with any partial line from previous read
+      const newContent = fileState.partialLine + buffer.toString('utf-8');
+      const lines = newContent.split('\n');
+
+      // The last element might be an incomplete line (no trailing newline)
+      // Save it for the next read
+      fileState.partialLine = lines.pop() || '';
+
+      // Process complete lines
       for (const line of lines) {
-        currentPosition += line.length + 1; // +1 for newline
-
-        if (currentPosition <= fileState.lastPosition) {
-          continue;
-        }
+        if (!line.trim()) continue;
 
         const messages = parseTranscriptLine(line);
 
@@ -222,6 +251,10 @@ export class TranscriptWatcher {
 
       fileState.lastPosition = fileSize;
     } catch (error) {
+      // Clean up file handle on error
+      if (fileHandle) {
+        try { await fileHandle.close(); } catch { /* ignore */ }
+      }
       // File might not exist yet, which is fine
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         console.error('[TranscriptWatcher] Error reading file:', filePath, error);
@@ -235,6 +268,8 @@ export class TranscriptWatcher {
   setWorkingDirectory(workingDirectory: string): void {
     this.workingDirectory = workingDirectory;
     this.subagentsDir = null; // Reset cached directory
+    this.cachedFiles.clear(); // Clear cached file list
+    this.lastDirScan = 0; // Force directory re-scan
   }
 }
 

@@ -220,8 +220,12 @@ export class TeamManager extends EventEmitter {
     this.sendToRenderer('team:agent-status', { teamId, agentId, status });
   }
 
+  // Maximum number of messages per agent to prevent memory leaks
+  private static readonly MAX_MESSAGES_PER_AGENT = 200;
+
   /**
    * Add a message to an agent
+   * Messages are capped to prevent unbounded memory growth during long sessions
    */
   addAgentMessage(teamId: string, agentId: string, message: AgentMessage): void {
     const team = this.teams.get(teamId);
@@ -231,6 +235,13 @@ export class TeamManager extends EventEmitter {
     if (!agent) return;
 
     agent.messages.push(message);
+
+    // Cap message array to prevent memory leaks
+    if (agent.messages.length > TeamManager.MAX_MESSAGES_PER_AGENT) {
+      const removed = agent.messages.splice(0, agent.messages.length - TeamManager.MAX_MESSAGES_PER_AGENT);
+      console.log(`[TeamManager] Pruned ${removed.length} old messages for agent ${agentId}`);
+    }
+
     this.emit('agentMessage', { teamId, agentId, message });
     this.sendToRenderer('team:agent-message', { teamId, agentId, message });
   }

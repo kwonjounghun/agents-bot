@@ -13,6 +13,16 @@ import { AgentIdMapper, createAgentIdMapper } from './routing/agentIdMapper';
 // Agent type normalization (from oh-my-claudecode:xxx to xxx)
 const AGENT_TYPE_PREFIX = 'oh-my-claudecode:';
 
+// Map SDK built-in agent types to our agent types (moved to module scope for performance)
+const AGENT_TYPE_MAP: Readonly<Record<string, string>> = {
+  'general-purpose': 'executor',
+  'general': 'executor',
+  'default': 'executor',
+  'plan': 'planner',
+  'bash': 'executor',
+  'explorer': 'explore',
+};
+
 /**
  * Represents an active agent context in the execution stack
  */
@@ -55,18 +65,9 @@ export function normalizeAgentType(agentType: string): AgentRole {
   // Convert to lowercase for consistent matching
   normalized = normalized.toLowerCase();
 
-  // Map SDK built-in agent types to our agent types
-  const agentTypeMap: Record<string, AgentRole> = {
-    'general-purpose': 'executor',
-    'general': 'executor',
-    'default': 'executor',
-    'plan': 'planner',
-    'bash': 'executor',
-    'explorer': 'explore',
-  };
-
-  if (agentTypeMap[normalized]) {
-    return agentTypeMap[normalized];
+  // Use module-scope map for better performance
+  if (AGENT_TYPE_MAP[normalized]) {
+    return AGENT_TYPE_MAP[normalized];
   }
 
   return normalized;

@@ -55,6 +55,13 @@ export const STATUS_CONFIG: Record<AgentStatus, StatusConfig> = {
     bgColor: 'bg-red-400',
     borderColor: 'border-red-400',
     textColor: 'text-red-400'
+  },
+  stopped: {
+    text: 'Stopped',
+    color: 'orange',
+    bgColor: 'bg-orange-400',
+    borderColor: 'border-orange-400',
+    textColor: 'text-orange-400'
   }
 };
 
