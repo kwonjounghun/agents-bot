@@ -10,6 +10,7 @@ import { join } from 'path';
 export interface TrayCallbacks {
   onCallLeader: (workingDirectory: string) => void;
   onQuit: () => void;
+  onToggleWindow?: () => void;
 }
 
 export class TrayManager {
@@ -31,6 +32,12 @@ export class TrayManager {
     this.tray = new Tray(icon);
     this.tray.setToolTip('Claude Agent Desktop');
 
+    // Left-click: toggle window visibility
+    this.tray.on('click', () => {
+      this.callbacks.onToggleWindow?.();
+    });
+
+    // Right-click: show context menu
     this.updateMenu();
   }
 

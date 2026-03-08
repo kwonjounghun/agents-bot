@@ -53,7 +53,7 @@ export async function createMainWindow(
     x: screenWidth - finalConfig.width - finalConfig.rightOffset,
     y: finalConfig.topOffset,
     frame: true,
-    alwaysOnTop: true,
+    alwaysOnTop: false,
     resizable: true,
     skipTaskbar: false,
     hasShadow: true,

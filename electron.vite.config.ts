@@ -25,9 +25,7 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/preload/index.ts'),
-          widgetPreload: resolve(__dirname, 'src/preload/widgetPreload.ts'),
-          leaderWidgetPreload: resolve(__dirname, 'src/preload/leaderWidgetPreload.ts')
+          index: resolve(__dirname, 'src/preload/index.ts')
         },
         external: ['electron'],
         output: {
@@ -41,9 +39,7 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/renderer/index.html'),
-          widget: resolve(__dirname, 'src/renderer/widget.html'),
-          leader: resolve(__dirname, 'src/renderer/leader.html')
+          index: resolve(__dirname, 'src/renderer/index.html')
         }
       }
     },

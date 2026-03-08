@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AgentStatus, MessageType, AgentRole, WidgetMessage, OMCStatusInfo } from '../shared/types';
+import type { AgentStatus, MessageType, OMCStatusInfo, AgentMessage } from '../shared/types';
 
 // Event types for renderer
 interface AgentMessageEvent {
@@ -29,18 +29,63 @@ interface AgentResultEvent {
   turns: number;
 }
 
-// Auto-detected team agent events
-interface AgentJoinedEvent {
-  agentId: string;
-  role: string;
+// Team-related types
+interface SerializedTeam {
+  id: string;
+  name: string;
+  workingDirectory: string;
+  leaderId: string;
+  agents: SerializedAgent[];
+  status: 'idle' | 'active' | 'complete';
+  createdAt: number;
 }
 
-interface AgentCompletedEvent {
-  agentId: string;
+interface SerializedAgent {
+  id: string;
   role: string;
+  isLeader: boolean;
+  status: AgentStatus;
+  messages: AgentMessage[];
 }
 
-// Expose APIs to renderer
+interface TeamCreatedEvent {
+  id: string;
+  name: string;
+  workingDirectory: string;
+  leaderId: string;
+  agents: SerializedAgent[];
+  status: string;
+  createdAt: number;
+}
+
+interface TeamAgentAddedEvent {
+  teamId: string;
+  agent: SerializedAgent;
+}
+
+interface TeamAgentRemovedEvent {
+  teamId: string;
+  agentId: string;
+}
+
+interface TeamAgentStatusEvent {
+  teamId: string;
+  agentId: string;
+  status: AgentStatus;
+}
+
+interface TeamAgentMessageEvent {
+  teamId: string;
+  agentId: string;
+  message: AgentMessage;
+}
+
+interface TeamInitEvent {
+  teams: SerializedTeam[];
+  activeTeamId: string | null;
+}
+
+// Expose Claude API to renderer (legacy, for backward compatibility)
 contextBridge.exposeInMainWorld('claudeAPI', {
   // Send prompt to Claude
   sendPrompt: (prompt: string, workingDirectory?: string) => {
@@ -97,62 +142,150 @@ contextBridge.exposeInMainWorld('claudeAPI', {
     return () => ipcRenderer.removeListener('agent:result', handler);
   },
 
-  // Auto-detected team agent events
-  onAgentJoined: (callback: (event: AgentJoinedEvent) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: AgentJoinedEvent) => callback(data);
-    ipcRenderer.on('team:agent-joined', handler);
-    return () => ipcRenderer.removeListener('team:agent-joined', handler);
-  },
-
-  onAgentCompleted: (callback: (event: AgentCompletedEvent) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: AgentCompletedEvent) => callback(data);
-    ipcRenderer.on('team:agent-completed', handler);
-    return () => ipcRenderer.removeListener('team:agent-completed', handler);
-  },
-
-  // === Team Widget Controls ===
-
-  // Spawn team widgets
-  spawnTeamWidgets: (agents: { id: string; role: AgentRole }[]): Promise<{ id: string; role: AgentRole; windowId: number }[]> => {
-    return ipcRenderer.invoke('team:spawn-widgets', agents);
-  },
-
-  // Send message to a specific widget
-  sendWidgetMessage: (message: WidgetMessage) => {
-    ipcRenderer.send('team:widget-message', message);
-  },
-
-  // Send status to a specific widget
-  sendWidgetStatus: (agentId: string, status: AgentStatus) => {
-    ipcRenderer.send('team:widget-status', { agentId, status });
-  },
-
-  // Close a specific widget
-  closeWidget: (agentId: string) => {
-    ipcRenderer.send('team:close-widget', agentId);
-  },
-
-  // Close all widgets
-  closeAllWidgets: () => {
-    ipcRenderer.send('team:close-all-widgets');
-  },
-
-  // Get active widget count
-  getWidgetCount: (): Promise<number> => {
-    return ipcRenderer.invoke('team:get-widget-count');
-  },
-
   // === OMC APIs ===
-
-  // Get OMC installation status
   getOMCStatus: (workingDirectory?: string): Promise<OMCStatusInfo> => {
     return ipcRenderer.invoke('omc:get-status', workingDirectory);
   },
 
-  // Initialize OMC
   initializeOMC: (workingDirectory?: string): Promise<OMCStatusInfo> => {
     return ipcRenderer.invoke('omc:initialize', workingDirectory);
   }
+});
+
+// Expose Team API to renderer (new multi-team architecture)
+contextBridge.exposeInMainWorld('teamAPI', {
+  // === Commands ===
+
+  // Create a new team
+  createTeam: (workingDirectory: string): Promise<SerializedTeam | null> => {
+    return ipcRenderer.invoke('team:create', workingDirectory);
+  },
+
+  // Get all teams
+  getAllTeams: (): Promise<SerializedTeam[]> => {
+    return ipcRenderer.invoke('team:get-all');
+  },
+
+  // Get a specific team
+  getTeam: (teamId: string): Promise<SerializedTeam | null> => {
+    return ipcRenderer.invoke('team:get', teamId);
+  },
+
+  // Set active team
+  setActiveTeam: (teamId: string): Promise<boolean> => {
+    return ipcRenderer.invoke('team:set-active', teamId);
+  },
+
+  // Delete a team
+  deleteTeam: (teamId: string): Promise<boolean> => {
+    return ipcRenderer.invoke('team:delete', teamId);
+  },
+
+  // Send command to a team
+  sendCommand: (teamId: string, command: string) => {
+    ipcRenderer.send('team:send-command', { teamId, command });
+  },
+
+  // Close all teams
+  closeAllTeams: () => {
+    ipcRenderer.send('team:close-all');
+  },
+
+  // Get team count
+  getTeamCount: (): Promise<number> => {
+    return ipcRenderer.invoke('team:get-count');
+  },
+
+  // Select directory (reuse from claudeAPI)
+  selectDirectory: (): Promise<string | null> => {
+    return ipcRenderer.invoke('dialog:select-directory');
+  },
+
+  // === Event Listeners ===
+
+  // Initial state when window loads
+  onInit: (callback: (event: TeamInitEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: TeamInitEvent) => callback(data);
+    ipcRenderer.on('team:init', handler);
+    return () => ipcRenderer.removeListener('team:init', handler);
+  },
+
+  // Team created
+  onTeamCreated: (callback: (team: TeamCreatedEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: TeamCreatedEvent) => callback(data);
+    ipcRenderer.on('team:created', handler);
+    return () => ipcRenderer.removeListener('team:created', handler);
+  },
+
+  // Team deleted
+  onTeamDeleted: (callback: (data: { teamId: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { teamId: string }) => callback(data);
+    ipcRenderer.on('team:deleted', handler);
+    return () => ipcRenderer.removeListener('team:deleted', handler);
+  },
+
+  // Team status changed
+  onTeamStatusChanged: (callback: (data: { teamId: string; status: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { teamId: string; status: string }) => callback(data);
+    ipcRenderer.on('team:status-changed', handler);
+    return () => ipcRenderer.removeListener('team:status-changed', handler);
+  },
+
+  // Active team changed
+  onActiveTeamChanged: (callback: (data: { teamId: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { teamId: string }) => callback(data);
+    ipcRenderer.on('team:active-changed', handler);
+    return () => ipcRenderer.removeListener('team:active-changed', handler);
+  },
+
+  // Agent added to team
+  onAgentAdded: (callback: (event: TeamAgentAddedEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: TeamAgentAddedEvent) => callback(data);
+    ipcRenderer.on('team:agent-added', handler);
+    return () => ipcRenderer.removeListener('team:agent-added', handler);
+  },
+
+  // Agent removed from team
+  onAgentRemoved: (callback: (event: TeamAgentRemovedEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: TeamAgentRemovedEvent) => callback(data);
+    ipcRenderer.on('team:agent-removed', handler);
+    return () => ipcRenderer.removeListener('team:agent-removed', handler);
+  },
+
+  // Agent status changed
+  onAgentStatus: (callback: (event: TeamAgentStatusEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: TeamAgentStatusEvent) => callback(data);
+    ipcRenderer.on('team:agent-status', handler);
+    return () => ipcRenderer.removeListener('team:agent-status', handler);
+  },
+
+  // Agent message received
+  onAgentMessage: (callback: (event: TeamAgentMessageEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: TeamAgentMessageEvent) => callback(data);
+    ipcRenderer.on('team:agent-message', handler);
+    return () => ipcRenderer.removeListener('team:agent-message', handler);
+  },
+
+  // Agent message update (streaming)
+  onAgentMessageUpdate: (callback: (data: { teamId: string; agentId: string; messageId: string; content: string; isStreaming: boolean }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { teamId: string; agentId: string; messageId: string; content: string; isStreaming: boolean }) => callback(data);
+    ipcRenderer.on('team:agent-message-update', handler);
+    return () => ipcRenderer.removeListener('team:agent-message-update', handler);
+  },
+
+  // All teams cleared
+  onAllCleared: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('team:all-cleared', handler);
+    return () => ipcRenderer.removeListener('team:all-cleared', handler);
+  },
+
+  // Error event
+  onError: (callback: (data: { teamId: string; error: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { teamId: string; error: string }) => callback(data);
+    ipcRenderer.on('team:error', handler);
+    return () => ipcRenderer.removeListener('team:error', handler);
+  },
 });
 
 // Type declarations for global window object
@@ -169,19 +302,33 @@ declare global {
       onStatus: (callback: (event: AgentStatusEvent) => void) => () => void;
       onError: (callback: (event: AgentErrorEvent) => void) => () => void;
       onResult: (callback: (event: AgentResultEvent) => void) => () => void;
-      // Auto-detected team agent events
-      onAgentJoined: (callback: (event: AgentJoinedEvent) => void) => () => void;
-      onAgentCompleted: (callback: (event: AgentCompletedEvent) => void) => () => void;
-      // Team Widget Controls
-      spawnTeamWidgets: (agents: { id: string; role: AgentRole }[]) => Promise<{ id: string; role: AgentRole; windowId: number }[]>;
-      sendWidgetMessage: (message: WidgetMessage) => void;
-      sendWidgetStatus: (agentId: string, status: AgentStatus) => void;
-      closeWidget: (agentId: string) => void;
-      closeAllWidgets: () => void;
-      getWidgetCount: () => Promise<number>;
-      // OMC APIs
       getOMCStatus: (workingDirectory?: string) => Promise<OMCStatusInfo>;
       initializeOMC: (workingDirectory?: string) => Promise<OMCStatusInfo>;
+    };
+    teamAPI: {
+      // Commands
+      createTeam: (workingDirectory: string) => Promise<SerializedTeam | null>;
+      getAllTeams: () => Promise<SerializedTeam[]>;
+      getTeam: (teamId: string) => Promise<SerializedTeam | null>;
+      setActiveTeam: (teamId: string) => Promise<boolean>;
+      deleteTeam: (teamId: string) => Promise<boolean>;
+      sendCommand: (teamId: string, command: string) => void;
+      closeAllTeams: () => void;
+      getTeamCount: () => Promise<number>;
+      selectDirectory: () => Promise<string | null>;
+      // Event Listeners
+      onInit: (callback: (event: TeamInitEvent) => void) => () => void;
+      onTeamCreated: (callback: (team: TeamCreatedEvent) => void) => () => void;
+      onTeamDeleted: (callback: (data: { teamId: string }) => void) => () => void;
+      onTeamStatusChanged: (callback: (data: { teamId: string; status: string }) => void) => () => void;
+      onActiveTeamChanged: (callback: (data: { teamId: string }) => void) => () => void;
+      onAgentAdded: (callback: (event: TeamAgentAddedEvent) => void) => () => void;
+      onAgentRemoved: (callback: (event: TeamAgentRemovedEvent) => void) => () => void;
+      onAgentStatus: (callback: (event: TeamAgentStatusEvent) => void) => () => void;
+      onAgentMessage: (callback: (event: TeamAgentMessageEvent) => void) => () => void;
+      onAgentMessageUpdate: (callback: (data: { teamId: string; agentId: string; messageId: string; content: string; isStreaming: boolean }) => void) => () => void;
+      onAllCleared: (callback: () => void) => () => void;
+      onError: (callback: (data: { teamId: string; error: string }) => void) => () => void;
     };
   }
 }

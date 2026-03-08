@@ -106,14 +106,6 @@ export {
   type WindowManagerConfig
 } from './windowManager';
 
-// Message Router Service
-export {
-  MessageRouterService,
-  createMessageRouterService,
-  type MessageRouterConfig,
-  type MessageIdState
-} from './messageRouterService';
-
 // Transcript Message Handler
 export {
   createTranscriptMessageHandler,
