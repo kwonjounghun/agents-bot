@@ -84,8 +84,8 @@ export function createTranscriptMessageHandler(
    * Filter messages that should not be processed
    */
   function shouldSkipMessage(message: TranscriptMessage): boolean {
-    // Skip tool_result only (too verbose), but show thinking, text, and tool_use
-    if (message.type === 'tool_result') {
+    // Only show thinking and text messages (skip tool_use and tool_result)
+    if (message.type === 'tool_use' || message.type === 'tool_result') {
       return true;
     }
 
