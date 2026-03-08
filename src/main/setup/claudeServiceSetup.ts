@@ -136,18 +136,57 @@ interface LeaderMessageState {
 }
 
 /**
+ * Per-team leader message state manager
+ */
+interface LeaderStateManager {
+  get(teamId: string): LeaderMessageState;
+  reset(teamId: string): void;
+  clear(teamId: string): void;
+}
+
+function createLeaderStateManager(): LeaderStateManager {
+  const states = new Map<string, LeaderMessageState>();
+
+  function createEmptyState(): LeaderMessageState {
+    return {
+      currentType: null,
+      currentMessageId: null,
+      accumulatedContent: '',
+    };
+  }
+
+  return {
+    get(teamId: string): LeaderMessageState {
+      let state = states.get(teamId);
+      if (!state) {
+        state = createEmptyState();
+        states.set(teamId, state);
+      }
+      return state;
+    },
+    reset(teamId: string): void {
+      const state = states.get(teamId);
+      if (state) {
+        state.currentType = null;
+        state.currentMessageId = null;
+        state.accumulatedContent = '';
+      }
+    },
+    clear(teamId: string): void {
+      states.delete(teamId);
+    },
+  };
+}
+
+/**
  * Setup message event handlers with routing logic
  */
 function setupMessageHandlers(
   claudeService: ClaudeAgentService,
   deps: ClaudeServiceDependencies
 ): void {
-  // Leader message state for accumulation (closure)
-  const leaderState: LeaderMessageState = {
-    currentType: null,
-    currentMessageId: null,
-    accumulatedContent: '',
-  };
+  // Per-team leader message state manager (replaces single shared state)
+  const leaderStateManager = createLeaderStateManager();
 
   claudeService.on('message', (message: ClaudeAgentMessage) => {
     console.log(
@@ -161,19 +200,19 @@ function setupMessageHandlers(
 
     switch (message.type) {
       case 'text':
-        handleTextMessage(message, deps, leaderState);
+        handleTextMessage(message, deps, leaderStateManager);
         break;
       case 'thinking':
-        handleThinkingMessage(message, deps, leaderState);
+        handleThinkingMessage(message, deps, leaderStateManager);
         break;
       case 'tool_use':
-        handleToolUseMessage(message, deps, leaderState);
+        handleToolUseMessage(message, deps, leaderStateManager);
         break;
       case 'result':
-        handleResultMessage(message, deps, leaderState);
+        handleResultMessage(message, deps, leaderStateManager);
         break;
       case 'error':
-        handleErrorMessage(message, deps, leaderState);
+        handleErrorMessage(message, deps, leaderStateManager);
         break;
     }
   });
@@ -185,7 +224,7 @@ function setupMessageHandlers(
 function handleTextMessage(
   message: ClaudeAgentMessage,
   deps: ClaudeServiceDependencies,
-  leaderState: LeaderMessageState
+  leaderStateManager: LeaderStateManager
 ): void {
   const { textId } = deps.getMessageIds();
   const newTextId = textId || `text-${Date.now()}`;
@@ -204,6 +243,9 @@ function handleTextMessage(
   if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
     const activeTeam = deps.teamManager.getActiveTeam();
     if (activeTeam) {
+      // Get per-team state
+      const leaderState = leaderStateManager.get(activeTeam.id);
+
       // Skip if content equals accumulated (this is the final complete message)
       if (leaderState.accumulatedContent === message.content) {
         console.log('[ClaudeServiceSetup] Skipping duplicate final message');
@@ -247,7 +289,7 @@ function handleTextMessage(
 function handleThinkingMessage(
   message: ClaudeAgentMessage,
   deps: ClaudeServiceDependencies,
-  leaderState: LeaderMessageState
+  leaderStateManager: LeaderStateManager
 ): void {
   const { thinkingId } = deps.getMessageIds();
   const newThinkingId = thinkingId || `thinking-${Date.now()}`;
@@ -266,6 +308,9 @@ function handleThinkingMessage(
   if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
     const activeTeam = deps.teamManager.getActiveTeam();
     if (activeTeam) {
+      // Get per-team state
+      const leaderState = leaderStateManager.get(activeTeam.id);
+
       // Skip if content equals accumulated (this is the final complete message)
       if (leaderState.accumulatedContent === message.content) {
         console.log('[ClaudeServiceSetup] Skipping duplicate final thinking message');
@@ -309,21 +354,44 @@ function handleThinkingMessage(
 function handleToolUseMessage(
   message: ClaudeAgentMessage,
   deps: ClaudeServiceDependencies,
-  leaderState: LeaderMessageState
+  leaderStateManager: LeaderStateManager
 ): void {
   // Reset message IDs
   deps.setMessageIds(null, null);
 
-  // Reset leader state (tool use interrupts text/thinking flow)
-  leaderState.currentType = null;
-  leaderState.currentMessageId = null;
-  leaderState.accumulatedContent = '';
+  // Reset leader state for active team (tool use interrupts text/thinking flow)
+  if (deps.teamManager) {
+    const activeTeam = deps.teamManager.getActiveTeam();
+    if (activeTeam) {
+      leaderStateManager.reset(activeTeam.id);
+    }
+  }
 
   deps.sendToRenderer('agent:status', { status: 'using_tool' as AgentStatus });
   deps.sendToRenderer('agent:tool-use', {
     toolName: message.toolName || 'Unknown',
     input: message.toolInput || '',
   });
+
+  // Route leader tool_use messages (no parentToolUseId) to TeamManager
+  if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
+    const activeTeam = deps.teamManager.getActiveTeam();
+    if (activeTeam) {
+      const msgId = `leader-tool-${Date.now()}`;
+      const toolContent = message.toolInput
+        ? `${message.toolName || 'Tool'}\n${message.toolInput}`
+        : message.toolName || 'Tool';
+
+      deps.teamManager.addAgentMessage(activeTeam.id, activeTeam.leaderId, {
+        id: msgId,
+        type: 'tool_use',
+        content: toolContent,
+        toolName: message.toolName,
+        timestamp: Date.now(),
+        isStreaming: false,
+      });
+    }
+  }
 }
 
 /**
@@ -332,15 +400,18 @@ function handleToolUseMessage(
 function handleResultMessage(
   message: ClaudeAgentMessage,
   deps: ClaudeServiceDependencies,
-  leaderState: LeaderMessageState
+  leaderStateManager: LeaderStateManager
 ): void {
   // Reset message IDs
   deps.setMessageIds(null, null);
 
-  // Reset leader state
-  leaderState.currentType = null;
-  leaderState.currentMessageId = null;
-  leaderState.accumulatedContent = '';
+  // Reset leader state for active team
+  if (deps.teamManager) {
+    const activeTeam = deps.teamManager.getActiveTeam();
+    if (activeTeam) {
+      leaderStateManager.reset(activeTeam.id);
+    }
+  }
 
   deps.sendToRenderer('agent:status', { status: 'complete' as AgentStatus });
   deps.sendToRenderer('agent:result', {
@@ -348,6 +419,25 @@ function handleResultMessage(
     costUsd: message.costUsd || 0,
     turns: message.turns || 0,
   });
+
+  // Route leader result messages (no parentToolUseId) to TeamManager
+  if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
+    const activeTeam = deps.teamManager.getActiveTeam();
+    if (activeTeam) {
+      const msgId = `leader-result-${Date.now()}`;
+      const resultContent = message.costUsd !== undefined
+        ? `${message.content}\n\n💰 Cost: $${message.costUsd.toFixed(4)} | Turns: ${message.turns || 0}`
+        : message.content;
+
+      deps.teamManager.addAgentMessage(activeTeam.id, activeTeam.leaderId, {
+        id: msgId,
+        type: 'result',
+        content: resultContent,
+        timestamp: Date.now(),
+        isStreaming: false,
+      });
+    }
+  }
 }
 
 /**
@@ -356,17 +446,36 @@ function handleResultMessage(
 function handleErrorMessage(
   message: ClaudeAgentMessage,
   deps: ClaudeServiceDependencies,
-  leaderState: LeaderMessageState
+  leaderStateManager: LeaderStateManager
 ): void {
   // Reset message IDs
   deps.setMessageIds(null, null);
 
-  // Reset leader state
-  leaderState.currentType = null;
-  leaderState.currentMessageId = null;
-  leaderState.accumulatedContent = '';
+  // Reset leader state for active team
+  if (deps.teamManager) {
+    const activeTeam = deps.teamManager.getActiveTeam();
+    if (activeTeam) {
+      leaderStateManager.reset(activeTeam.id);
+    }
+  }
 
   deps.sendToRenderer('agent:status', { status: 'error' as AgentStatus });
   deps.sendToRenderer('agent:error', { error: message.content });
+
+  // Route leader error messages (no parentToolUseId) to TeamManager
+  if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
+    const activeTeam = deps.teamManager.getActiveTeam();
+    if (activeTeam) {
+      const msgId = `leader-error-${Date.now()}`;
+
+      deps.teamManager.addAgentMessage(activeTeam.id, activeTeam.leaderId, {
+        id: msgId,
+        type: 'error',
+        content: message.content,
+        timestamp: Date.now(),
+        isStreaming: false,
+      });
+    }
+  }
 }
 

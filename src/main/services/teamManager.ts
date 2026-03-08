@@ -26,6 +26,8 @@ export interface Team {
   agents: Map<string, AgentInfo>;
   status: 'idle' | 'active' | 'complete';
   createdAt: number;
+  /** Whether a conversation has been started in this session */
+  hasConversationStarted: boolean;
 }
 
 export interface TeamManagerEvents {
@@ -36,7 +38,7 @@ export interface TeamManagerEvents {
   agentRemoved: { teamId: string; agentId: string };
   agentStatusChanged: { teamId: string; agentId: string; status: AgentStatus };
   agentMessage: { teamId: string; agentId: string; message: AgentMessage };
-  commandReceived: { teamId: string; command: string; workingDirectory: string };
+  commandReceived: { teamId: string; command: string; workingDirectory: string; shouldContinue: boolean };
 }
 
 export class TeamManager extends EventEmitter {
@@ -88,6 +90,7 @@ export class TeamManager extends EventEmitter {
       agents: new Map([[leaderId, leader]]),
       status: 'idle',
       createdAt: Date.now(),
+      hasConversationStarted: false,
     };
 
     this.teams.set(teamId, team);
@@ -361,11 +364,24 @@ export class TeamManager extends EventEmitter {
     // Set as active team
     this.setActiveTeam(teamId);
 
+    // Determine if we should continue existing conversation
+    // Only continue if conversation has already started in this session
+    const shouldContinue = team.hasConversationStarted;
+
+    // Mark conversation as started for subsequent commands
+    if (!team.hasConversationStarted) {
+      team.hasConversationStarted = true;
+      console.log('[TeamManager] Starting new conversation for team:', teamId);
+    } else {
+      console.log('[TeamManager] Continuing existing conversation for team:', teamId);
+    }
+
     // Emit command event for main process to handle
     this.emit('commandReceived', {
       teamId,
       command,
       workingDirectory: team.workingDirectory,
+      shouldContinue,
     });
   }
 

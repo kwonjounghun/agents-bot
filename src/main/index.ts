@@ -41,8 +41,8 @@ app.whenReady().then(async () => {
   teamManager = createTeamManager();
 
   // Handle commands from team (leader)
-  teamManager.on('commandReceived', async ({ teamId, command, workingDirectory }: { teamId: string; command: string; workingDirectory: string }) => {
-    console.log('[Main] Team command received:', command.substring(0, 50));
+  teamManager.on('commandReceived', async ({ teamId, command, workingDirectory, shouldContinue }: { teamId: string; command: string; workingDirectory: string; shouldContinue: boolean }) => {
+    console.log('[Main] Team command received:', command.substring(0, 50), 'shouldContinue:', shouldContinue);
 
     // Reset message IDs for new conversation
     currentTextMessageId = null;
@@ -64,7 +64,7 @@ app.whenReady().then(async () => {
       await claudeService?.query({
         prompt: command,
         workingDirectory,
-        continue: true
+        continue: shouldContinue
       });
     } catch (error) {
       console.error('[Main] Error executing team command:', error);

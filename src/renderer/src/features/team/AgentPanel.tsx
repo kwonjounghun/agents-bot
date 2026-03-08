@@ -134,10 +134,7 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Agent[
         return icon ? <span className="mr-1">{icon}</span> : null;
       })()}
       <span className="whitespace-pre-wrap break-words">
-        {message.content.length > 500
-          ? message.content.slice(0, 500) + '...'
-          : message.content
-        }
+        {message.content}
       </span>
       {message.isStreaming && (
         <span className="inline-block w-1.5 h-3 bg-current animate-pulse ml-0.5" />
