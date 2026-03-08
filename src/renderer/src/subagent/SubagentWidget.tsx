@@ -10,7 +10,7 @@
  * TranscriptWatcher polls JSONL files → IPC → Widget
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useMemo } from 'react';
 import { AnimatePresence } from 'framer-motion';
 
 // Data Layer
@@ -30,27 +30,40 @@ function SubagentWidget() {
   const { state, derived, setAgentId, setRole, setStatus } = useSubagentState();
   const { messages, isStreaming, handleMessage, handleStatusChange, clearMessages } = useSubagentMessages();
 
+  // Memoized handlers to prevent useEffect re-runs
+  const onMessageHandler = useCallback(
+    (message) => {
+      console.log('[SubagentWidget] Received message:', message.type, 'content length:', message.content?.length);
+      handleMessage(message);
+    },
+    [handleMessage]
+  );
+
+  const onStatusHandler = useCallback(
+    (status) => {
+      console.log('[SubagentWidget] Received status:', status);
+      setStatus(status);
+      handleStatusChange(status);
+    },
+    [setStatus, handleStatusChange]
+  );
+
+  const onCloseHandler = useCallback(() => {
+    window.close();
+  }, []);
+
+  // Memoize handlers object to prevent useEffect re-runs on every render
+  const handlers = useMemo(
+    () => ({
+      onMessage: onMessageHandler,
+      onStatus: onStatusHandler,
+      onClose: onCloseHandler
+    }),
+    [onMessageHandler, onStatusHandler, onCloseHandler]
+  );
+
   // Data Layer - IPC Subscriptions (polling-based data from TranscriptWatcher)
-  const params = useSubagentDataSource({
-    onMessage: useCallback(
-      (message) => {
-        console.log('[SubagentWidget] Received message:', message.type, 'content length:', message.content?.length);
-        handleMessage(message);
-      },
-      [handleMessage]
-    ),
-    onStatus: useCallback(
-      (status) => {
-        console.log('[SubagentWidget] Received status:', status);
-        setStatus(status);
-        handleStatusChange(status);
-      },
-      [setStatus, handleStatusChange]
-    ),
-    onClose: useCallback(() => {
-      window.close();
-    }, [])
-  });
+  const params = useSubagentDataSource(handlers);
 
   // Initialize agent identity from URL params
   useEffect(() => {

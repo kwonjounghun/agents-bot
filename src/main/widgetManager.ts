@@ -65,6 +65,12 @@ export class WidgetManager {
         this.readyWidgets.add(agentId);
         // Flush any buffered messages that arrived during loading
         this.flushBuffer(agentId);
+
+        // Open DevTools in development mode for debugging
+        if (process.env.NODE_ENV === 'development') {
+          widget.webContents.openDevTools({ mode: 'detach' });
+        }
+
         resolve();
       });
 

@@ -37,6 +37,10 @@ export class LeaderAgentManager extends EventEmitter {
   private subAgents: Map<string, SubAgentInfo> = new Map();
   private isLeaderReady: boolean = false;
   private messageBuffer: Array<{ agentId: string; type: string; content: string }> = [];
+  /** Track sub-agent widgets that are fully loaded and ready to receive messages */
+  private readySubAgents: Set<string> = new Set();
+  /** Buffer for messages that arrive before sub-agent widget is ready */
+  private subAgentMessageBuffer: Map<string, Array<{ channel: string; data: unknown }>> = new Map();
 
   constructor() {
     super();
@@ -178,6 +182,8 @@ export class LeaderAgentManager extends EventEmitter {
     // Handle window close
     window.on('closed', () => {
       this.subAgents.delete(agentId);
+      this.readySubAgents.delete(agentId);
+      this.subAgentMessageBuffer.delete(agentId);
       this.emit('subAgentClosed', { agentId });
     });
 
@@ -186,9 +192,23 @@ export class LeaderAgentManager extends EventEmitter {
       ? 'http://localhost:5173/widget.html'
       : `file://${join(__dirname, '../renderer/widget.html')}`;
 
-    await window.loadURL(`${baseUrl}?agentId=${agentId}&role=${role}`);
+    // Wait for both loadURL and did-finish-load to complete
+    await new Promise<void>((resolve) => {
+      window.webContents.once('did-finish-load', () => {
+        console.log('[LeaderAgentManager] Sub-agent widget ready:', agentId, 'role:', role);
+        this.readySubAgents.add(agentId);
+        // Flush any buffered messages that arrived during loading
+        this.flushSubAgentBuffer(agentId);
+        resolve();
+      });
 
-    console.log('[LeaderAgentManager] Sub-agent widget created:', agentId, role);
+      window.loadURL(`${baseUrl}?agentId=${agentId}&role=${role}`).catch((err) => {
+        console.error('[LeaderAgentManager] Failed to load sub-agent widget URL:', err);
+        resolve(); // Resolve anyway to avoid blocking
+      });
+    });
+
+    console.log('[LeaderAgentManager] Sub-agent widget creation complete:', agentId);
     this.emit('subAgentCreated', { agentId, role, parentToolUseId });
 
     return subAgent;
@@ -245,9 +265,52 @@ export class LeaderAgentManager extends EventEmitter {
    */
   sendToSubAgent(agentId: string, channel: string, data: unknown): void {
     const subAgent = this.subAgents.get(agentId);
-    if (subAgent?.window && !subAgent.window.isDestroyed()) {
-      subAgent.window.webContents.send(channel, data);
+    if (!subAgent?.window || subAgent.window.isDestroyed()) {
+      console.log('[LeaderAgentManager] sendToSubAgent failed: widget not found or destroyed for', agentId);
+      return;
     }
+
+    // Buffer message if widget isn't ready yet
+    if (!this.readySubAgents.has(agentId)) {
+      console.log('[LeaderAgentManager] Sub-agent widget not ready, buffering message for', agentId);
+      this.bufferSubAgentMessage(agentId, channel, data);
+      return;
+    }
+
+    console.log('[LeaderAgentManager] sendToSubAgent:', 'agentId:', agentId, 'channel:', channel);
+    subAgent.window.webContents.send(channel, data);
+  }
+
+  /**
+   * Buffer a message for later delivery when sub-agent widget is ready
+   */
+  private bufferSubAgentMessage(agentId: string, channel: string, data: unknown): void {
+    const buffer = this.subAgentMessageBuffer.get(agentId) || [];
+    buffer.push({ channel, data });
+    this.subAgentMessageBuffer.set(agentId, buffer);
+  }
+
+  /**
+   * Flush all buffered messages to the sub-agent widget
+   */
+  private flushSubAgentBuffer(agentId: string): void {
+    const buffer = this.subAgentMessageBuffer.get(agentId);
+    if (!buffer || buffer.length === 0) {
+      console.log('[LeaderAgentManager] flushSubAgentBuffer: no messages to flush for', agentId);
+      return;
+    }
+
+    const subAgent = this.subAgents.get(agentId);
+    if (!subAgent?.window || subAgent.window.isDestroyed()) {
+      console.log('[LeaderAgentManager] flushSubAgentBuffer: widget not available for', agentId);
+      return;
+    }
+
+    console.log('[LeaderAgentManager] flushSubAgentBuffer: flushing', buffer.length, 'messages for', agentId);
+    for (const msg of buffer) {
+      subAgent.window.webContents.send(msg.channel, msg.data);
+    }
+    this.subAgentMessageBuffer.delete(agentId);
   }
 
   /**
@@ -301,6 +364,8 @@ export class LeaderAgentManager extends EventEmitter {
       subAgent.window.close();
     }
     this.subAgents.delete(agentId);
+    this.readySubAgents.delete(agentId);
+    this.subAgentMessageBuffer.delete(agentId);
   }
 
   /**
@@ -314,6 +379,8 @@ export class LeaderAgentManager extends EventEmitter {
       this.emit('subAgentClosed', { agentId });
     }
     this.subAgents.clear();
+    this.readySubAgents.clear();
+    this.subAgentMessageBuffer.clear();
   }
 
   /**

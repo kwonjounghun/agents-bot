@@ -31,8 +31,16 @@ export function getSubagentParams(): SubagentParams {
 export function subscribeToSubagentData(handlers: SubagentDataHandlers): () => void {
   const cleanupFns: (() => void)[] = [];
 
+  console.log('[useSubagentDataSource] subscribeToSubagentData called, widgetAPI:', !!window.widgetAPI);
+
   // Message subscription - data comes from TranscriptWatcher polling
   const unsubMessage = window.widgetAPI?.onMessage((message: SubagentWidgetMessage) => {
+    console.log('[useSubagentDataSource] IPC message received:', {
+      type: message.type,
+      contentLength: message.content?.length || 0,
+      agentId: message.agentId
+    });
+
     const incomingMessage: IncomingMessage = {
       type: message.type,
       content: message.content,
@@ -42,6 +50,7 @@ export function subscribeToSubagentData(handlers: SubagentDataHandlers): () => v
     };
     handlers.onMessage(incomingMessage);
   });
+  console.log('[useSubagentDataSource] Message subscription set up:', !!unsubMessage);
   if (unsubMessage) cleanupFns.push(unsubMessage);
 
   // Status subscription
@@ -71,9 +80,15 @@ export function subscribeToSubagentData(handlers: SubagentDataHandlers): () => v
 export function useSubagentDataSource(handlers: SubagentDataHandlers): SubagentParams {
   const params = getSubagentParams();
 
+  console.log('[useSubagentDataSource] Hook called, params:', params);
+
   useEffect(() => {
+    console.log('[useSubagentDataSource] useEffect running, setting up subscriptions');
     const cleanup = subscribeToSubagentData(handlers);
-    return cleanup;
+    return () => {
+      console.log('[useSubagentDataSource] useEffect cleanup');
+      cleanup();
+    };
   }, [handlers]);
 
   return params;

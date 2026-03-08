@@ -84,8 +84,8 @@ export function createTranscriptMessageHandler(
    * Filter messages that should not be processed
    */
   function shouldSkipMessage(message: TranscriptMessage): boolean {
-    // Only show thinking and text messages (skip tool_use and tool_result for cleaner display)
-    if (message.type === 'tool_use' || message.type === 'tool_result') {
+    // Skip tool_result only (too verbose), but show thinking, text, and tool_use
+    if (message.type === 'tool_result') {
       return true;
     }
 
@@ -101,8 +101,15 @@ export function createTranscriptMessageHandler(
   /**
    * Map transcript message type to widget message type
    */
-  function mapMessageType(type: TranscriptMessage['type']): 'thinking' | 'speaking' {
-    return type === 'thinking' ? 'thinking' : 'speaking';
+  function mapMessageType(type: TranscriptMessage['type']): 'thinking' | 'speaking' | 'tool_use' {
+    switch (type) {
+      case 'thinking':
+        return 'thinking';
+      case 'tool_use':
+        return 'tool_use';
+      default:
+        return 'speaking';
+    }
   }
 
   /**
@@ -128,7 +135,7 @@ export function createTranscriptMessageHandler(
   function routeToWidget(
     agentId: string,
     normalizedRole: string,
-    widgetType: 'thinking' | 'speaking',
+    widgetType: 'thinking' | 'speaking' | 'tool_use',
     content: string
   ): void {
     const messageData = {
@@ -140,19 +147,37 @@ export function createTranscriptMessageHandler(
       isNewSection: false
     };
 
+    console.log('[TranscriptHandler] routeToWidget:', {
+      agentId,
+      role: normalizedRole,
+      type: widgetType,
+      contentLength: content.length,
+      hasLeader: leaderManager?.hasLeader()
+    });
+
     // Route to LeaderAgentManager (which owns the sub-agent widgets)
     if (leaderManager?.hasLeader()) {
+      console.log('[TranscriptHandler] Sending to LeaderAgentManager.sendToSubAgent');
       leaderManager.sendToSubAgent(agentId, 'widget:message', messageData);
     } else {
       // Fallback to WidgetManager for non-leader mode
+      console.log('[TranscriptHandler] Sending to WidgetManager.sendMessageToWidget');
       widgetManager?.sendMessageToWidget(messageData);
     }
   }
 
   return {
     handleMessage(message: TranscriptMessage): void {
+      console.log('[TranscriptHandler] handleMessage called:', {
+        type: message.type,
+        agentId: message.agentId,
+        contentLength: message.content?.length || 0,
+        contentPreview: message.content?.substring(0, 80)
+      });
+
       // Filter unwanted messages
       if (shouldSkipMessage(message)) {
+        console.log('[TranscriptHandler] Message skipped by filter:', message.type);
         return;
       }
 
@@ -160,6 +185,7 @@ export function createTranscriptMessageHandler(
       // Use getAgentByTranscriptId for JSONL agentId matching (claude-esp style)
       const agentContext = streamRouter?.getAgentByTranscriptId(message.agentId!);
       if (!agentContext) {
+        console.log('[TranscriptHandler] No agent context found for agentId:', message.agentId);
         return;
       }
 
