@@ -1,26 +1,68 @@
 /**
  * TeamView Component
  *
- * Main content area displaying the selected team's agents in a grid.
+ * Main content area displaying the team's agents in a grid.
+ * Single team mode - shows directory selection when no team exists.
  */
 
+import { useState } from 'react';
 import { useTeams } from '../../contexts/TeamsContext';
 import { AgentGrid } from './AgentGrid';
 import { TeamInput } from './TeamInput';
 import type { AgentStatus } from '../../../../shared/types';
 
 export function TeamView() {
-  const { activeTeam } = useTeams();
+  const { activeTeam, createTeam } = useTeams();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSelectDirectory = async () => {
+    setIsLoading(true);
+    try {
+      const directory = await window.teamAPI?.selectDirectory();
+      if (directory) {
+        await createTeam(directory);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   if (!activeTeam) {
     return (
       <div className="flex-1 flex items-center justify-center bg-slate-900">
         <div className="text-center">
           <div className="text-6xl mb-4">🤖</div>
-          <div className="text-slate-400 text-lg">No team selected</div>
-          <div className="text-slate-500 text-sm mt-2">
-            Create a new team or select an existing one
+          <div className="text-slate-400 text-lg mb-4">Welcome to Agent Teams</div>
+          <div className="text-slate-500 text-sm mb-6">
+            Select a working directory to start
           </div>
+          <button
+            onClick={handleSelectDirectory}
+            disabled={isLoading}
+            className={`
+              px-6 py-3 rounded-lg font-medium text-sm
+              bg-gradient-to-r from-blue-500 to-purple-500 text-white
+              hover:from-blue-600 hover:to-purple-600
+              shadow-lg shadow-blue-500/25
+              transition-all
+              ${isLoading ? 'opacity-50 cursor-wait' : ''}
+            `}
+          >
+            {isLoading ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Loading...
+              </span>
+            ) : (
+              <span className="flex items-center justify-center gap-2">
+                <span>📁</span>
+                <span>Select Directory</span>
+              </span>
+            )}
+          </button>
         </div>
       </div>
     );
