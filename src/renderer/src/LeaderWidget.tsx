@@ -5,9 +5,10 @@
  * Displays leader status with accumulating messages and manages sub-agent overview.
  */
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { AgentStatus, AgentRole, SpeechMessage } from '../../shared/types';
+import { useMessageAccumulator, type IncomingMessage } from './hooks/useMessageAccumulator';
 
 interface SubAgentInfo {
   agentId: string;
@@ -15,43 +16,20 @@ interface SubAgentInfo {
   status: AgentStatus;
 }
 
-interface LeaderMessage {
-  type: 'thinking' | 'speaking' | 'tool_use' | 'tool_result' | 'complete' | 'error';
-  content: string;
-  timestamp: number;
-  sectionId?: string;
-  isNewSection?: boolean;
-  toolName?: string;
-}
-
 function LeaderWidget() {
   const [leaderId, setLeaderId] = useState('');
   const [workingDirectory, setWorkingDirectory] = useState('');
   const [status, setStatus] = useState<AgentStatus>('idle');
   const [command, setCommand] = useState('');
-  const [messages, setMessages] = useState<SpeechMessage[]>([]);
   const [subAgents, setSubAgents] = useState<SubAgentInfo[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Use shared message accumulator hook
+  const { messages, handleMessage, handleComplete, clearMessages } = useMessageAccumulator();
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const currentSectionRef = useRef<{ id: string; type: string } | null>(null);
-
-  // Generate a unique section ID
-  const generateSectionId = useCallback(() => {
-    return `section-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  }, []);
-
-  // Map message type
-  const mapMessageType = useCallback((type: LeaderMessage['type']): SpeechMessage['type'] => {
-    switch (type) {
-      case 'thinking': return 'thinking';
-      case 'tool_use': return 'tool_use';
-      case 'tool_result': return 'tool_result';
-      default: return 'speaking';
-    }
-  }, []);
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -69,18 +47,11 @@ function LeaderWidget() {
     // Notify ready
     window.leaderAPI?.notifyReady();
 
-    // Subscribe to events - with accumulating logic
-    const unsubMessage = window.leaderAPI?.onMessage((message: LeaderMessage) => {
+    // Subscribe to events - use shared accumulator hook
+    const unsubMessage = window.leaderAPI?.onMessage((message: IncomingMessage) => {
       if (message.type === 'complete') {
-        // Mark the last section as complete
-        setMessages(prev => {
-          if (prev.length === 0) return prev;
-          return prev.map((m, i) =>
-            i === prev.length - 1 ? { ...m, isComplete: true } : m
-          );
-        });
+        handleComplete();
         setIsProcessing(false);
-        currentSectionRef.current = null;
         return;
       }
 
@@ -90,44 +61,7 @@ function LeaderWidget() {
         return;
       }
 
-      const msgType = mapMessageType(message.type);
-
-      setMessages(prev => {
-        const currentSection = currentSectionRef.current;
-
-        // Check if this is a new section or continuation
-        const isNewSection = message.isNewSection ||
-          !currentSection ||
-          currentSection.type !== msgType;
-
-        if (isNewSection) {
-          // Mark previous section as complete
-          const updatedPrev = prev.length > 0
-            ? prev.map((m, i) =>
-                i === prev.length - 1 ? { ...m, isComplete: true } : m
-              )
-            : prev;
-
-          // Create new section
-          const newSectionId = message.sectionId || generateSectionId();
-          currentSectionRef.current = { id: newSectionId, type: msgType };
-
-          return [...updatedPrev, {
-            id: newSectionId,
-            type: msgType,
-            content: message.content,
-            timestamp: Date.now(),
-            isComplete: false
-          }];
-        } else {
-          // Update existing section content
-          return prev.map((m, i) =>
-            i === prev.length - 1
-              ? { ...m, content: message.content }
-              : m
-          );
-        }
-      });
+      handleMessage(message);
     });
 
     const unsubStatus = window.leaderAPI?.onStatus((newStatus) => {
@@ -180,7 +114,7 @@ function LeaderWidget() {
       unsubError?.();
       unsubResult?.();
     };
-  }, [generateSectionId, mapMessageType]);
+  }, [handleMessage, handleComplete]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,8 +122,7 @@ function LeaderWidget() {
 
     setIsProcessing(true);
     setError(null);
-    setMessages([]); // Clear previous messages
-    currentSectionRef.current = null;
+    clearMessages(); // Clear previous messages
     window.leaderAPI?.sendCommand(command);
     setCommand('');
   };

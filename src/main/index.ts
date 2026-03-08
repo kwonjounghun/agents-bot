@@ -2,7 +2,8 @@ import { app, BrowserWindow } from 'electron';
 import type { ClaudeAgentService, AgentStartEvent, AgentStopEvent } from './claudeAgentService';
 import { WidgetManager } from './widgetManager';
 import { createStreamRouter, normalizeAgentType, type StreamRouter } from './services/streamRouter';
-import { createTranscriptWatcher, type TranscriptWatcher, type TranscriptMessage } from './services/transcriptWatcher';
+import { createTranscriptWatcher, type TranscriptWatcher } from './services/transcriptWatcher';
+import { createTranscriptMessageHandler, type TranscriptMessageHandler } from './services/transcriptMessageHandler';
 import { createTrayManager, type TrayManager } from './tray';
 import { createLeaderAgentManager, type LeaderAgentManager } from './leaderAgentManager';
 import { registerIpcHandlers } from './setup/ipcHandlers';
@@ -17,6 +18,7 @@ let claudeService: ClaudeAgentService | null = null;
 let widgetManager: WidgetManager | null = null;
 let streamRouter: StreamRouter | null = null;
 let transcriptWatcher: TranscriptWatcher | null = null;
+let transcriptHandler: TranscriptMessageHandler | null = null;
 let trayManager: TrayManager | null = null;
 let leaderManager: LeaderAgentManager | null = null;
 let currentWorkingDirectory: string | null = null;
@@ -24,9 +26,6 @@ let currentWorkingDirectory: string | null = null;
 // Track current message IDs for streaming accumulation
 let currentTextMessageId: string | null = null;
 let currentThinkingMessageId: string | null = null;
-
-// Track accumulated transcript content per agent
-const transcriptAccumulator: Map<string, { text: string; thinking: string; tool_use: string; tool_result: string }> = new Map();
 
 function sendToRenderer(channel: string, data: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -63,7 +62,7 @@ app.whenReady().then(async () => {
 
     // Stop all transcript watchers from previous query
     transcriptWatcher?.stopAll();
-    transcriptAccumulator.clear();
+    transcriptHandler?.clearAllAccumulators();
 
     // Update leader status
     leaderManager?.sendToLeader('status', { status: 'thinking' });
@@ -107,59 +106,18 @@ app.whenReady().then(async () => {
   trayManager.initialize();
   console.log('[Main] Tray manager initialized');
 
-  // Initialize TranscriptWatcher with callbacks
+  // Initialize TranscriptMessageHandler (extracted from inline callback)
+  transcriptHandler = createTranscriptMessageHandler({
+    streamRouter: streamRouter!,
+    widgetManager: widgetManager!,
+    leaderManager
+  });
+
+  // Initialize TranscriptWatcher with handler
   const workingDir = currentWorkingDirectory || process.cwd();
   transcriptWatcher = createTranscriptWatcher(
     {
-      onMessage: (message: TranscriptMessage) => {
-        // Only show thinking and text messages (skip tool_use and tool_result for cleaner display)
-        if (message.type === 'tool_use' || message.type === 'tool_result') {
-          return;
-        }
-
-        // Skip messages without agentId (shouldn't happen with proper JSONL parsing)
-        if (!message.agentId) {
-          console.log('[Main] Transcript message without agentId, skipping');
-          return;
-        }
-
-        // Route transcript content to the widget via StreamRouter
-        // Use getAgentByTranscriptId for JSONL agentId matching (claude-esp style)
-        const agentContext = streamRouter?.getAgentByTranscriptId(message.agentId);
-        if (agentContext) {
-          console.log('[Main] Transcript routing: JSONL agentId', message.agentId, '-> SDK agentId', agentContext.agentId);
-          // Get or create accumulator for this agent
-          let accum = transcriptAccumulator.get(message.agentId);
-          if (!accum) {
-            accum = { text: '', thinking: '', tool_use: '', tool_result: '' };
-            transcriptAccumulator.set(message.agentId, accum);
-          }
-
-          // Map transcript message types to widget message types
-          let widgetType: 'thinking' | 'speaking';
-          let accumulatedContent: string;
-
-          if (message.type === 'thinking') {
-            widgetType = 'thinking';
-            accum.thinking += message.content + '\n';
-            accumulatedContent = accum.thinking;
-          } else {
-            // text type -> speaking
-            widgetType = 'speaking';
-            accum.text += message.content + '\n';
-            accumulatedContent = accum.text;
-          }
-
-          widgetManager?.sendMessageToWidget({
-            agentId: message.agentId,
-            role: agentContext.normalizedRole,
-            type: widgetType,
-            content: accumulatedContent.trim(),
-            timestamp: Date.now(),
-            isNewSection: false
-          });
-        }
-      },
+      onMessage: (message) => transcriptHandler!.handleMessage(message),
       onError: (error: Error, agentId: string) => {
         console.error('[Main] Transcript error for', agentId, ':', error.message);
       }
@@ -180,7 +138,7 @@ app.whenReady().then(async () => {
       currentThinkingMessageId = thinkingId;
     },
     clearTranscriptAccumulator: (agentId) => {
-      transcriptAccumulator.delete(agentId);
+      transcriptHandler?.clearAccumulator(agentId);
     },
   });
 
@@ -230,7 +188,7 @@ app.whenReady().then(async () => {
       currentThinkingMessageId = null;
     },
     clearTranscriptAccumulator: () => {
-      transcriptAccumulator.clear();
+      transcriptHandler?.clearAllAccumulators();
     },
   });
 

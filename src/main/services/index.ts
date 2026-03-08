@@ -56,15 +56,6 @@ export {
   type QueryOptions
 } from './hookBuilder';
 
-// OMC Manager
-export {
-  createOMCManager,
-  type OMCManager,
-  type OMCStatus,
-  type OMCManagerCallbacks,
-  type SdkOmcResult
-} from './omcManager';
-
 // Agent Normalizer
 export {
   normalizeAgentType,
@@ -122,3 +113,11 @@ export {
   type MessageRouterConfig,
   type MessageIdState
 } from './messageRouterService';
+
+// Transcript Message Handler
+export {
+  createTranscriptMessageHandler,
+  type TranscriptMessageHandler,
+  type TranscriptMessageHandlerConfig,
+  type MessageAccumulator
+} from './transcriptMessageHandler';

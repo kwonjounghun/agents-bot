@@ -6,40 +6,24 @@
  * text keeps growing within each section until a new section starts.
  */
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { AgentRole, AgentStatus, WidgetMessage, SpeechMessage } from '../../shared/types';
+import type { AgentRole, AgentStatus, WidgetMessage } from '../../shared/types';
 import { AGENT_CONFIG } from '../../shared/agentTypes';
 import { AccumulatingSpeechBubble } from './components/AccumulatingSpeechBubble';
 import { AgentAvatar } from './components/AgentAvatar';
+import { useMessageAccumulator } from './hooks/useMessageAccumulator';
 
 function Widget() {
   const [agentId, setAgentId] = useState('');
   const [role, setRole] = useState<AgentRole>('executor');
   const [status, setStatus] = useState<AgentStatus>('idle');
-  const [messages, setMessages] = useState<SpeechMessage[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
 
-  // Track the current section type
-  const currentSectionRef = useRef<{ id: string; type: string } | null>(null);
+  // Use shared message accumulator hook
+  const { messages, isStreaming, handleMessage, clearMessages } = useMessageAccumulator();
+
   // Track reset timeout to prevent memory leak
   const resetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Map widget message type to speech message type
-  const mapMessageType = useCallback((type: WidgetMessage['type']): SpeechMessage['type'] => {
-    switch (type) {
-      case 'thinking': return 'thinking';
-      case 'tool_use': return 'tool_use';
-      case 'tool_result': return 'tool_result';
-      case 'speaking':
-      default: return 'speaking';
-    }
-  }, []);
-
-  // Generate a unique section ID
-  const generateSectionId = useCallback(() => {
-    return `section-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  }, []);
 
   useEffect(() => {
     // Get widget identity from URL params
@@ -49,64 +33,10 @@ function Widget() {
       setRole(params.role as AgentRole);
     }
 
-    // Subscribe to messages
+    // Subscribe to messages - use shared accumulator hook
     const unsubMessage = window.widgetAPI?.onMessage((message: WidgetMessage) => {
       console.log('[Widget] Received message:', message.type, 'content length:', message.content?.length);
-
-      if (message.type === 'complete') {
-        console.log('[Widget] Message type: complete');
-        // Mark the last section as complete
-        setMessages(prev => {
-          if (prev.length === 0) return prev;
-          return prev.map((m, i) =>
-            i === prev.length - 1 ? { ...m, isComplete: true } : m
-          );
-        });
-        setIsStreaming(false);
-        currentSectionRef.current = null;
-        return;
-      }
-
-      const msgType = mapMessageType(message.type);
-
-      setMessages(prev => {
-        const currentSection = currentSectionRef.current;
-
-        // Check if this is a new section or continuation
-        const isNewSection = message.isNewSection ||
-          !currentSection ||
-          currentSection.type !== msgType;
-
-        if (isNewSection) {
-          // Mark previous section as complete
-          const updatedPrev = prev.length > 0
-            ? prev.map((m, i) =>
-                i === prev.length - 1 ? { ...m, isComplete: true } : m
-              )
-            : prev;
-
-          // Create new section
-          const newSectionId = message.sectionId || generateSectionId();
-          currentSectionRef.current = { id: newSectionId, type: msgType };
-
-          return [...updatedPrev, {
-            id: newSectionId,
-            type: msgType,
-            content: message.content,
-            timestamp: Date.now(),
-            isComplete: false
-          }];
-        } else {
-          // Update existing section (content is already accumulated by TranscriptWatcher)
-          return prev.map((m, i) =>
-            i === prev.length - 1
-              ? { ...m, content: message.content }
-              : m
-          );
-        }
-      });
-
-      setIsStreaming(true);
+      handleMessage(message);
     });
 
     const unsubStatus = window.widgetAPI?.onStatus((data) => {
@@ -120,13 +50,9 @@ function Widget() {
         }
         // Reset after delay to show last message
         resetTimeoutRef.current = setTimeout(() => {
-          setMessages([]);
-          setIsStreaming(false);
-          currentSectionRef.current = null;
+          clearMessages();
           resetTimeoutRef.current = null;
         }, 2000);
-      } else if (data.status === 'complete') {
-        setIsStreaming(false);
       }
     });
 
@@ -143,7 +69,7 @@ function Widget() {
         clearTimeout(resetTimeoutRef.current);
       }
     };
-  }, [mapMessageType, generateSectionId]);
+  }, [handleMessage, clearMessages]);
 
   const config = AGENT_CONFIG[role];
   const isActive = status === 'thinking' || status === 'responding' || status === 'using_tool';
