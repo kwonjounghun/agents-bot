@@ -63,7 +63,8 @@ app.whenReady().then(async () => {
     try {
       await claudeService?.query({
         prompt: command,
-        workingDirectory
+        workingDirectory,
+        continue: true
       });
     } catch (error) {
       console.error('[Main] Error executing team command:', error);

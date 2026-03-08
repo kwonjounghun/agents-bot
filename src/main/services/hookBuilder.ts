@@ -157,6 +157,8 @@ export interface QueryParams {
   abortController?: AbortController;
   hooks?: SDKHooks;
   agents?: Record<string, unknown>;
+  /** Continue the most recent conversation instead of starting a new one */
+  continue?: boolean;
 }
 
 export interface QueryOptions {
@@ -169,6 +171,8 @@ export interface QueryOptions {
   pathToClaudeCodeExecutable: string;
   hooks?: SDKHooks;
   agents?: Record<string, unknown>;
+  /** Continue the most recent conversation instead of starting a new one */
+  continue?: boolean;
 }
 
 /**
@@ -187,6 +191,7 @@ export function buildQueryOptions(params: QueryParams): QueryOptions {
     includePartialMessages: true,
     pathToClaudeCodeExecutable: '/opt/homebrew/bin/claude',
     hooks: params.hooks,
-    agents: params.agents
+    agents: params.agents,
+    continue: params.continue
   };
 }

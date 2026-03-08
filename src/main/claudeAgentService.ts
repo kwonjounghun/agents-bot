@@ -157,7 +157,7 @@ export class ClaudeAgentService extends EventEmitter {
     this.isRunning = true;
     this.abortController = new AbortController();
 
-    const { prompt: rawPrompt, workingDirectory, model } = options;
+    const { prompt: rawPrompt, workingDirectory, model, continue: continueConversation } = options;
     this.currentWorkingDirectory = workingDirectory || process.cwd();
     this.omcIntegration.setWorkingDirectory(this.currentWorkingDirectory);
 
@@ -222,7 +222,8 @@ export class ClaudeAgentService extends EventEmitter {
         model,
         abortController: this.abortController,
         hooks: finalHooks,
-        agents: this.omcIntegration.isEnabled() ? this.omcIntegration.getAgents() : undefined
+        agents: this.omcIntegration.isEnabled() ? this.omcIntegration.getAgents() : undefined,
+        continue: continueConversation
       });
 
       if (this.omcIntegration.isEnabled()) {

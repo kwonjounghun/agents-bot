@@ -90,6 +90,8 @@ export interface QueryOptions {
   prompt: string;
   workingDirectory?: string;
   model?: string;
+  /** Continue the most recent conversation instead of starting a new one */
+  continue?: boolean;
 }
 
 // OMC Status for UI display
