@@ -107,8 +107,3 @@ export function formatToolInputCompact(toolName: string, input: unknown): string
   return `${toolName}${detail}`;
 }
 
-/**
- * Legacy alias for formatToolInputDetailed
- * @deprecated Use formatToolInputDetailed instead
- */
-export const formatToolInput = formatToolInputDetailed;

@@ -74,16 +74,6 @@ export {
   type TeamAgent
 } from './teamStateManager';
 
-// Widget Router
-export {
-  createWidgetRouter,
-  type WidgetRouter,
-  type WidgetMessage,
-  type WidgetMessageType,
-  type WidgetManagerInterface,
-  type AgentStatus
-} from './widgetRouter';
-
 // OMC Integration
 export {
   OMCIntegration,
@@ -98,13 +88,6 @@ export {
   type PersistentModeConfig,
   type QueryFunction
 } from './persistentModeService';
-
-// Window Manager
-export {
-  WindowManagerService,
-  createWindowManager,
-  type WindowManagerConfig
-} from './windowManager';
 
 // Transcript Message Handler
 export {
