@@ -109,30 +109,20 @@ export function useMessageAccumulator(): UseMessageAccumulatorReturn {
    * Handle incoming message - accumulate into sections
    */
   const handleMessage = useCallback((message: IncomingMessage) => {
-    console.log('[useMessageAccumulator-legacy] handleMessage:', {
-      type: message.type,
-      contentLength: message.content?.length || 0,
-      contentPreview: message.content?.substring(0, 80)
-    });
-
     // Handle complete type
     if (message.type === 'complete') {
-      console.log('[useMessageAccumulator-legacy] Complete message received');
       handleComplete();
       return;
     }
 
     // Skip error type (handled separately by components)
     if (message.type === 'error') {
-      console.log('[useMessageAccumulator-legacy] Error message ignored');
       return;
     }
 
     const msgType = mapMessageType(message.type);
-    console.log('[useMessageAccumulator-legacy] Mapped type:', message.type, '->', msgType);
 
     setMessages(prev => {
-      console.log('[useMessageAccumulator-legacy] setMessages: prev count:', prev.length);
       const currentSection = currentSectionRef.current;
 
       // Check if this is a new section or continuation
@@ -152,8 +142,6 @@ export function useMessageAccumulator(): UseMessageAccumulatorReturn {
         const newSectionId = message.sectionId || generateSectionId();
         currentSectionRef.current = { id: newSectionId, type: msgType };
 
-        console.log('[useMessageAccumulator-legacy] Creating new section:', newSectionId, 'type:', msgType, 'total sections:', updatedPrev.length + 1);
-
         return [...updatedPrev, {
           id: newSectionId,
           type: msgType,
@@ -163,7 +151,6 @@ export function useMessageAccumulator(): UseMessageAccumulatorReturn {
         }];
       } else {
         // Update existing section (content is already accumulated by TranscriptWatcher)
-        console.log('[useMessageAccumulator-legacy] Updating existing section, new content length:', message.content?.length);
         return prev.map((m, i) =>
           i === prev.length - 1
             ? { ...m, content: message.content }

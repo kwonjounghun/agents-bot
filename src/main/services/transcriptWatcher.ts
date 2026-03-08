@@ -202,7 +202,6 @@ export class TranscriptWatcher {
 
       // Process new lines
       let currentPosition = 0;
-      let newLinesCount = 0;
       for (const line of lines) {
         currentPosition += line.length + 1; // +1 for newline
 
@@ -210,36 +209,15 @@ export class TranscriptWatcher {
           continue;
         }
 
-        newLinesCount++;
         const messages = parseTranscriptLine(line);
-
-        // Debug: Log parsed messages
-        if (messages.length > 0) {
-          console.log('[TranscriptWatcher] Parsed', messages.length, 'messages from line');
-          for (const message of messages) {
-            console.log('[TranscriptWatcher] Message:', {
-              type: message.type,
-              agentId: message.agentId,
-              contentPreview: message.content?.substring(0, 100) + (message.content?.length > 100 ? '...' : ''),
-              isWatched: message.agentId ? this.activeAgents.has(message.agentId) : false
-            });
-          }
-        }
 
         for (const message of messages) {
           // Use agentId from JSONL content (already extracted by parseTranscriptLine)
           // Only emit if this agent is being watched
           if (message.agentId && this.activeAgents.has(message.agentId)) {
-            console.log('[TranscriptWatcher] Emitting message for watched agent:', message.agentId, 'type:', message.type);
             this.callbacks.onMessage(message);
-          } else if (message.agentId) {
-            console.log('[TranscriptWatcher] Skipping message - agent not watched:', message.agentId, 'activeAgents:', Array.from(this.activeAgents));
           }
         }
-      }
-
-      if (newLinesCount > 0) {
-        console.log('[TranscriptWatcher] Processed', newLinesCount, 'new lines from', filePath);
       }
 
       fileState.lastPosition = fileSize;

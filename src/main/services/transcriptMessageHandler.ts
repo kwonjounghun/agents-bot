@@ -91,7 +91,6 @@ export function createTranscriptMessageHandler(
 
     // Skip messages without agentId
     if (!message.agentId) {
-      console.log('[TranscriptHandler] Message without agentId, skipping');
       return true;
     }
 
@@ -147,37 +146,19 @@ export function createTranscriptMessageHandler(
       isNewSection: false
     };
 
-    console.log('[TranscriptHandler] routeToWidget:', {
-      agentId,
-      role: normalizedRole,
-      type: widgetType,
-      contentLength: content.length,
-      hasLeader: leaderManager?.hasLeader()
-    });
-
     // Route to LeaderAgentManager (which owns the sub-agent widgets)
     if (leaderManager?.hasLeader()) {
-      console.log('[TranscriptHandler] Sending to LeaderAgentManager.sendToSubAgent');
       leaderManager.sendToSubAgent(agentId, 'widget:message', messageData);
     } else {
       // Fallback to WidgetManager for non-leader mode
-      console.log('[TranscriptHandler] Sending to WidgetManager.sendMessageToWidget');
       widgetManager?.sendMessageToWidget(messageData);
     }
   }
 
   return {
     handleMessage(message: TranscriptMessage): void {
-      console.log('[TranscriptHandler] handleMessage called:', {
-        type: message.type,
-        agentId: message.agentId,
-        contentLength: message.content?.length || 0,
-        contentPreview: message.content?.substring(0, 80)
-      });
-
       // Filter unwanted messages
       if (shouldSkipMessage(message)) {
-        console.log('[TranscriptHandler] Message skipped by filter:', message.type);
         return;
       }
 
@@ -185,16 +166,8 @@ export function createTranscriptMessageHandler(
       // Use getAgentByTranscriptId for JSONL agentId matching (claude-esp style)
       const agentContext = streamRouter?.getAgentByTranscriptId(message.agentId!);
       if (!agentContext) {
-        console.log('[TranscriptHandler] No agent context found for agentId:', message.agentId);
         return;
       }
-
-      console.log(
-        '[TranscriptHandler] Routing: JSONL agentId',
-        message.agentId,
-        '-> SDK agentId',
-        agentContext.agentId
-      );
 
       // Get or create accumulator for this agent
       const accum = getAccumulator(message.agentId!);

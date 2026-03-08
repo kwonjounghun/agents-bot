@@ -33,7 +33,6 @@ function SubagentWidget() {
   // Memoized handlers to prevent useEffect re-runs
   const onMessageHandler = useCallback(
     (message) => {
-      console.log('[SubagentWidget] Received message:', message.type, 'content length:', message.content?.length);
       handleMessage(message);
     },
     [handleMessage]
@@ -41,7 +40,6 @@ function SubagentWidget() {
 
   const onStatusHandler = useCallback(
     (status) => {
-      console.log('[SubagentWidget] Received status:', status);
       setStatus(status);
       handleStatusChange(status);
     },

@@ -61,16 +61,9 @@ export class WidgetManager {
     // Wait for both loadURL and did-finish-load to complete
     await new Promise<void>((resolve) => {
       widget.webContents.once('did-finish-load', () => {
-        console.log('[WidgetManager] Widget ready:', agentId, 'role:', role);
         this.readyWidgets.add(agentId);
         // Flush any buffered messages that arrived during loading
         this.flushBuffer(agentId);
-
-        // Open DevTools in development mode for debugging
-        if (process.env.NODE_ENV === 'development') {
-          widget.webContents.openDevTools({ mode: 'detach' });
-        }
-
         resolve();
       });
 
@@ -80,7 +73,6 @@ export class WidgetManager {
       });
     });
 
-    console.log('[WidgetManager] Widget creation complete:', agentId);
     return widget;
   }
 
@@ -93,10 +85,7 @@ export class WidgetManager {
   sendToWidget(agentId: string, channel: string, data: unknown): void {
     const widget = this.widgets.get(agentId);
     if (widget && !widget.isDestroyed()) {
-      console.log('[WidgetManager] sendToWidget:', 'agentId:', agentId, 'channel:', channel);
       widget.webContents.send(channel, data);
-    } else {
-      console.log('[WidgetManager] sendToWidget failed: widget not found or destroyed for', agentId);
     }
   }
 

@@ -61,30 +61,19 @@ export function useMessageAccumulator(): UseMessageAccumulatorReturn {
 
   const handleMessage = useCallback(
     (message: IncomingMessage) => {
-      console.log('[useMessageAccumulator] handleMessage:', {
-        type: message.type,
-        contentLength: message.content?.length || 0,
-        contentPreview: message.content?.substring(0, 80),
-        isNewSection: message.isNewSection
-      });
-
       // Handle complete/error types
       if (message.type === 'complete') {
-        console.log('[useMessageAccumulator] Complete message received');
         handleComplete();
         return;
       }
 
       if (message.type === 'error') {
-        console.log('[useMessageAccumulator] Error message ignored');
         return; // Handled separately by components
       }
 
       const msgType = mapToSpeechType(message.type);
-      console.log('[useMessageAccumulator] Mapped type:', message.type, '->', msgType);
 
       setMessages((prev) => {
-        console.log('[useMessageAccumulator] setMessages: prev count:', prev.length);
         const currentSection = currentSectionRef.current;
         const isNewSection = message.isNewSection || !currentSection || currentSection.type !== msgType;
 
@@ -99,8 +88,6 @@ export function useMessageAccumulator(): UseMessageAccumulatorReturn {
           const newSectionId = message.sectionId || generateSectionId();
           currentSectionRef.current = { id: newSectionId, type: msgType };
 
-          console.log('[useMessageAccumulator] Creating new section:', newSectionId, 'type:', msgType);
-
           return [
             ...updatedPrev,
             {
@@ -113,7 +100,6 @@ export function useMessageAccumulator(): UseMessageAccumulatorReturn {
           ];
         } else {
           // Update existing section
-          console.log('[useMessageAccumulator] Updating existing section, new content length:', message.content?.length);
           return prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: message.content } : m));
         }
       });
