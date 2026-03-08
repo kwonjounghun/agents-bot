@@ -74,6 +74,9 @@ export function createTranscriptMessageHandler(
   // Internal accumulator state
   const accumulators = new Map<string, MessageAccumulator>();
 
+  // Track toolUseId -> toolName mapping for tool_result filtering
+  const toolUseRegistry = new Map<string, string>();
+
   /**
    * Get or create accumulator for an agent
    */
@@ -90,14 +93,27 @@ export function createTranscriptMessageHandler(
    * Filter messages that should not be processed
    */
   function shouldSkipMessage(message: TranscriptMessage): boolean {
-    // Only show thinking and text messages (skip tool_use and tool_result)
-    if (message.type === 'tool_use' || message.type === 'tool_result') {
-      return true;
-    }
-
     // Skip messages without agentId
     if (!message.agentId) {
       return true;
+    }
+
+    // Register tool_use for later tool_result correlation
+    if (message.type === 'tool_use' && message.toolUseId && message.toolName) {
+      toolUseRegistry.set(message.toolUseId, message.toolName);
+      // Skip tool_use messages (don't display them)
+      return true;
+    }
+
+    // For tool_result, only show Task tool results
+    if (message.type === 'tool_result') {
+      const toolName = message.toolUseId ? toolUseRegistry.get(message.toolUseId) : null;
+      // Only allow Task tool results
+      if (toolName !== 'Task') {
+        return true;
+      }
+      // Task tool_result - allow it through
+      return false;
     }
 
     return false;
@@ -106,12 +122,14 @@ export function createTranscriptMessageHandler(
   /**
    * Map transcript message type to MessageType
    */
-  function mapMessageType(type: TranscriptMessage['type']): 'thinking' | 'text' | 'tool_use' {
+  function mapMessageType(type: TranscriptMessage['type']): 'thinking' | 'text' | 'tool_use' | 'tool_result' {
     switch (type) {
       case 'thinking':
         return 'thinking';
       case 'tool_use':
         return 'tool_use';
+      case 'tool_result':
+        return 'tool_result';
       default:
         return 'text';
     }
@@ -121,13 +139,20 @@ export function createTranscriptMessageHandler(
    * Accumulate content and return the accumulated result
    */
   function accumulateContent(accum: MessageAccumulator, message: TranscriptMessage): string {
-    if (message.type === 'thinking') {
-      accum.thinking += message.content + '\n';
-      return accum.thinking;
-    } else {
-      // text type -> speaking
-      accum.text += message.content + '\n';
-      return accum.text;
+    switch (message.type) {
+      case 'thinking':
+        accum.thinking += message.content + '\n';
+        return accum.thinking;
+      case 'tool_use':
+        accum.tool_use += message.content + '\n';
+        return accum.tool_use;
+      case 'tool_result':
+        accum.tool_result += message.content + '\n';
+        return accum.tool_result;
+      default:
+        // text type -> speaking
+        accum.text += message.content + '\n';
+        return accum.text;
     }
   }
 
@@ -137,7 +162,7 @@ export function createTranscriptMessageHandler(
   function routeToTeam(
     agentId: string,
     _normalizedRole: string,
-    messageType: 'thinking' | 'text' | 'tool_use' | 'speaking',
+    messageType: 'thinking' | 'text' | 'tool_use' | 'tool_result' | 'speaking',
     content: string,
   ): void {
     console.log('[TranscriptMessageHandler] routeToTeam:', {
@@ -219,6 +244,7 @@ export function createTranscriptMessageHandler(
 
     clearAllAccumulators(): void {
       accumulators.clear();
+      toolUseRegistry.clear();
     },
   };
 }

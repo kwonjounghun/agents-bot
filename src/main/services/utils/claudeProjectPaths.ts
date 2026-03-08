@@ -125,3 +125,4 @@ export async function getSessionDir(workingDirectory: string): Promise<string | 
 
   return join(projectDir, sessionId);
 }
+

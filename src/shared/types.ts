@@ -1,7 +1,7 @@
 // Simplified types for Claude Agent SDK integration
 
 // Message types from SDK responses
-export type MessageType = 'text' | 'thinking' | 'tool_use' | 'result' | 'error' | 'speaking';
+export type MessageType = 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'result' | 'error' | 'speaking';
 
 // Agent team types - dynamic, any string role name is allowed
 export type AgentRole = string;
