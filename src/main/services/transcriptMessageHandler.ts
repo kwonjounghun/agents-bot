@@ -8,8 +8,7 @@
  */
 
 import type { StreamRouter } from './streamRouter';
-import type { WidgetManager } from '../widgetManager';
-import type { LeaderAgentManager } from '../leaderAgentManager';
+import type { TeamManager } from './teamManager';
 import type { TranscriptMessage } from './transcriptWatcher';
 
 /**
@@ -27,8 +26,7 @@ export interface MessageAccumulator {
  */
 export interface TranscriptMessageHandlerConfig {
   streamRouter: StreamRouter;
-  widgetManager: WidgetManager;
-  leaderManager: LeaderAgentManager | null;
+  teamManager: TeamManager | null;
 }
 
 /**
@@ -49,21 +47,15 @@ export interface TranscriptMessageHandler {
    * Clear all accumulators
    */
   clearAllAccumulators(): void;
-
-  /**
-   * Update leader manager reference
-   */
-  setLeaderManager(leaderManager: LeaderAgentManager | null): void;
 }
 
 /**
  * Create a transcript message handler instance
  */
 export function createTranscriptMessageHandler(
-  config: TranscriptMessageHandlerConfig
+  config: TranscriptMessageHandlerConfig,
 ): TranscriptMessageHandler {
-  const { streamRouter, widgetManager } = config;
-  let leaderManager = config.leaderManager;
+  const { streamRouter, teamManager } = config;
 
   // Internal accumulator state
   const accumulators = new Map<string, MessageAccumulator>();
@@ -98,26 +90,23 @@ export function createTranscriptMessageHandler(
   }
 
   /**
-   * Map transcript message type to widget message type
+   * Map transcript message type to MessageType
    */
-  function mapMessageType(type: TranscriptMessage['type']): 'thinking' | 'speaking' | 'tool_use' {
+  function mapMessageType(type: TranscriptMessage['type']): 'thinking' | 'text' | 'tool_use' {
     switch (type) {
       case 'thinking':
         return 'thinking';
       case 'tool_use':
         return 'tool_use';
       default:
-        return 'speaking';
+        return 'text';
     }
   }
 
   /**
    * Accumulate content and return the accumulated result
    */
-  function accumulateContent(
-    accum: MessageAccumulator,
-    message: TranscriptMessage
-  ): string {
+  function accumulateContent(accum: MessageAccumulator, message: TranscriptMessage): string {
     if (message.type === 'thinking') {
       accum.thinking += message.content + '\n';
       return accum.thinking;
@@ -129,29 +118,29 @@ export function createTranscriptMessageHandler(
   }
 
   /**
-   * Route message to appropriate widget
+   * Route message to TeamManager
    */
-  function routeToWidget(
+  function routeToTeam(
     agentId: string,
-    normalizedRole: string,
-    widgetType: 'thinking' | 'speaking' | 'tool_use',
-    content: string
+    _normalizedRole: string,
+    messageType: 'thinking' | 'text' | 'tool_use' | 'speaking',
+    content: string,
   ): void {
-    const messageData = {
-      agentId,
-      role: normalizedRole,
-      type: widgetType,
-      content: content.trim(),
-      timestamp: Date.now(),
-      isNewSection: false
-    };
+    if (!teamManager) return;
 
-    // Route to LeaderAgentManager (which owns the sub-agent widgets)
-    if (leaderManager?.hasLeader()) {
-      leaderManager.sendToSubAgent(agentId, 'widget:message', messageData);
-    } else {
-      // Fallback to WidgetManager for non-leader mode
-      widgetManager?.sendMessageToWidget(messageData);
+    const activeTeam = teamManager.getActiveTeam();
+    if (!activeTeam) return;
+
+    // Find agent in team and add message
+    const agent = activeTeam.agents.get(agentId);
+    if (agent) {
+      teamManager.addAgentMessage(activeTeam.id, agentId, {
+        id: `msg-${Date.now()}`,
+        type: messageType,
+        content: content.trim(),
+        timestamp: Date.now(),
+        isStreaming: true,
+      });
     }
   }
 
@@ -176,12 +165,12 @@ export function createTranscriptMessageHandler(
       const widgetType = mapMessageType(message.type);
       const accumulatedContent = accumulateContent(accum, message);
 
-      // Route to appropriate widget
-      routeToWidget(
+      // Route to team
+      routeToTeam(
         agentContext.agentId,
         agentContext.normalizedRole,
         widgetType,
-        accumulatedContent
+        accumulatedContent,
       );
     },
 
@@ -192,9 +181,5 @@ export function createTranscriptMessageHandler(
     clearAllAccumulators(): void {
       accumulators.clear();
     },
-
-    setLeaderManager(manager: LeaderAgentManager | null): void {
-      leaderManager = manager;
-    }
   };
 }

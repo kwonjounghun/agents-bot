@@ -1,7 +1,7 @@
 // Simplified types for Claude Agent SDK integration
 
 // Message types from SDK responses
-export type MessageType = 'text' | 'thinking' | 'tool_use' | 'result' | 'error';
+export type MessageType = 'text' | 'thinking' | 'tool_use' | 'result' | 'error' | 'speaking';
 
 // Agent team types - dynamic, any string role name is allowed
 export type AgentRole = string;
@@ -28,10 +28,10 @@ export interface WidgetMessage {
   type: 'thinking' | 'speaking' | 'tool_use' | 'tool_result' | 'complete';
   content: string;
   timestamp: number;
-  sectionId?: string;      // ID to track same section
-  isNewSection?: boolean;  // Flag for new section start
-  toolName?: string;       // Tool name for tool_use/tool_result
-  toolUseId?: string;      // Tool use ID for correlation
+  sectionId?: string; // ID to track same section
+  isNewSection?: boolean; // Flag for new section start
+  toolName?: string; // Tool name for tool_use/tool_result
+  toolUseId?: string; // Tool use ID for correlation
 }
 
 // Speech message for accumulating speech bubbles
@@ -40,8 +40,8 @@ export interface SpeechMessage {
   type: 'thinking' | 'speaking' | 'tool_use' | 'tool_result';
   content: string;
   timestamp: number;
-  isComplete: boolean;  // Whether this section is complete
-  toolName?: string;    // Tool name for tool messages
+  isComplete: boolean; // Whether this section is complete
+  toolName?: string; // Tool name for tool messages
 }
 
 // Simplified agent message for UI display

@@ -13,9 +13,8 @@ import {
 } from '../claudeAgentService';
 import type { StreamRouter } from '../services/streamRouter';
 import type { TranscriptWatcher } from '../services/transcriptWatcher';
-import type { LeaderAgentManager } from '../leaderAgentManager';
+import type { TeamManager } from '../services/teamManager';
 import type { AgentStatus } from '../../shared/types';
-import { formatToolInputCompact } from '../../shared/formatters/toolInputFormatter';
 
 /**
  * Dependencies required for Claude service setup
@@ -23,7 +22,7 @@ import { formatToolInputCompact } from '../../shared/formatters/toolInputFormatt
 export interface ClaudeServiceDependencies {
   streamRouter: StreamRouter | null;
   transcriptWatcher: TranscriptWatcher | null;
-  leaderManager: LeaderAgentManager | null;
+  teamManager: TeamManager | null;
   normalizeAgentType: (agentType: string) => string;
   sendToRenderer: (channel: string, data: unknown) => void;
   getMessageIds: () => { textId: string | null; thinkingId: string | null };
@@ -179,13 +178,6 @@ function handleTextMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDepen
     isComplete: false,
   });
 
-  // Route to leader or subagent widget
-  if (deps.leaderManager?.hasLeader()) {
-    routeToLeaderOrSubagent(message, 'speaking', 'responding', deps);
-  } else if (message.parentToolUseId) {
-    deps.streamRouter?.routeStatusByToolUseId('responding', message.parentToolUseId);
-    deps.streamRouter?.routeMessageByToolUseId('speaking', message.content, message.parentToolUseId);
-  }
 }
 
 /**
@@ -205,13 +197,6 @@ function handleThinkingMessage(message: ClaudeAgentMessage, deps: ClaudeServiceD
     isComplete: false,
   });
 
-  // Route to leader or subagent widget
-  if (deps.leaderManager?.hasLeader()) {
-    routeToLeaderOrSubagent(message, 'thinking', 'thinking', deps);
-  } else if (message.parentToolUseId) {
-    deps.streamRouter?.routeStatusByToolUseId('thinking', message.parentToolUseId);
-    deps.streamRouter?.routeMessageByToolUseId('thinking', message.content, message.parentToolUseId);
-  }
 }
 
 /**
@@ -227,12 +212,6 @@ function handleToolUseMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDe
     input: message.toolInput || '',
   });
 
-  // Route to subagent widget
-  if (message.parentToolUseId) {
-    const toolMessage = formatToolInputCompact(message.toolName || 'tool', message.toolInput);
-    deps.streamRouter?.routeStatusByToolUseId('using_tool', message.parentToolUseId);
-    deps.streamRouter?.routeMessageByToolUseId('tool_use', toolMessage, message.parentToolUseId);
-  }
 }
 
 /**
@@ -249,23 +228,6 @@ function handleResultMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDep
     turns: message.turns || 0,
   });
 
-  // Route to leader or broadcast
-  if (deps.leaderManager?.hasLeader()) {
-    deps.leaderManager.sendToLeader('status', { status: 'complete' });
-    deps.leaderManager.sendToLeader('result', {
-      result: message.content,
-      costUsd: message.costUsd || 0,
-      turns: message.turns || 0,
-    });
-    deps.leaderManager.sendToLeader('message', {
-      type: 'complete',
-      content: message.content,
-      timestamp: Date.now(),
-    });
-  } else if (deps.streamRouter && deps.streamRouter.getStackDepth() > 0) {
-    deps.streamRouter.broadcastStatus('complete');
-    deps.streamRouter.broadcastMessage('complete', '');
-  }
 }
 
 /**
@@ -278,47 +240,5 @@ function handleErrorMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDepe
   deps.sendToRenderer('agent:status', { status: 'error' as AgentStatus });
   deps.sendToRenderer('agent:error', { error: message.content });
 
-  // Route to leader or subagent
-  if (deps.leaderManager?.hasLeader()) {
-    if (message.parentToolUseId) {
-      const subAgent = deps.leaderManager.findSubAgentByToolUseId(message.parentToolUseId);
-      if (subAgent) {
-        deps.leaderManager.updateSubAgentStatus(subAgent.id, 'error');
-        deps.leaderManager.sendSubAgentMessage(subAgent.id, 'speaking', `Error: ${message.content}`);
-      }
-    } else {
-      deps.leaderManager.sendToLeader('status', { status: 'error' });
-      deps.leaderManager.sendToLeader('error', { error: message.content });
-    }
-  } else if (message.parentToolUseId) {
-    deps.streamRouter?.routeStatusByToolUseId('error', message.parentToolUseId);
-    deps.streamRouter?.routeMessageByToolUseId('speaking', `Error: ${message.content}`, message.parentToolUseId);
-  }
 }
 
-/**
- * Route message to leader widget or subagent widget
- */
-function routeToLeaderOrSubagent(
-  message: ClaudeAgentMessage,
-  messageType: 'speaking' | 'thinking',
-  status: AgentStatus,
-  deps: ClaudeServiceDependencies
-): void {
-  if (!deps.leaderManager) return;
-
-  if (message.parentToolUseId) {
-    const subAgent = deps.leaderManager.findSubAgentByToolUseId(message.parentToolUseId);
-    if (subAgent) {
-      deps.leaderManager.updateSubAgentStatus(subAgent.id, status);
-      deps.leaderManager.sendSubAgentMessage(subAgent.id, messageType, message.content);
-    }
-  } else {
-    deps.leaderManager.sendToLeader('status', { status });
-    deps.leaderManager.sendToLeader('message', {
-      type: messageType,
-      content: message.content,
-      timestamp: Date.now(),
-    });
-  }
-}

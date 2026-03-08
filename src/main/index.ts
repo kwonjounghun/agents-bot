@@ -34,8 +34,8 @@ console.log('[Main] Waiting for app ready...');
 app.whenReady().then(async () => {
   console.log('[Main] App is ready!');
 
-  // Initialize StreamRouter with 3-second auto-close delay
-  streamRouter = createStreamRouter({ autoCloseDelayMs: 3000 });
+  // Initialize StreamRouter
+  streamRouter = createStreamRouter();
 
   // Initialize Team Manager (replaces LeaderAgentManager + WidgetManager)
   teamManager = createTeamManager();

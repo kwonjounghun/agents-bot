@@ -1,20 +1,14 @@
 /**
  * StreamRouter Service
- * Single Responsibility: Route SDK stream messages to the correct agent widget
+ * Single Responsibility: Track active agent context for message routing
  *
  * This module handles:
  * - Tracking active agent context via a stack (for nested agent support)
- * - Routing messages to the currently active agent's widget
- * - Managing widget lifecycle (create on start, auto-close on complete)
- *
- * Architecture:
- *   SDK Stream → ClaudeAgentService → StreamRouter → WidgetManager → Widget
+ * - Agent ID mapping for transcript and toolUseId routing
  */
 
-import type { WidgetManager } from '../widgetManager';
-import type { AgentRole, WidgetMessage, AgentStatus } from '../../shared/types';
+import type { AgentRole } from '../../shared/types';
 import { AgentIdMapper, createAgentIdMapper } from './routing/agentIdMapper';
-import { SectionTracker, createSectionTracker, type WidgetMessageType } from './routing/sectionTracker';
 
 // Agent type normalization (from oh-my-claudecode:xxx to xxx)
 const AGENT_TYPE_PREFIX = 'oh-my-claudecode:';
@@ -32,21 +26,15 @@ export interface AgentContext {
   toolUseId?: string;
 }
 
-// Re-export WidgetMessageType from sectionTracker
-export type { WidgetMessageType } from './routing/sectionTracker';
-
 /**
  * Configuration for StreamRouter
  */
 export interface StreamRouterConfig {
-  /** Delay in ms before auto-closing widget after completion (default: 3000) */
-  autoCloseDelayMs: number;
   /** Maximum number of agents in the context stack (default: 10) */
   maxContextDepth: number;
 }
 
 const DEFAULT_CONFIG: StreamRouterConfig = {
-  autoCloseDelayMs: 3000,
   maxContextDepth: 10,
 };
 
@@ -85,34 +73,22 @@ export function normalizeAgentType(agentType: string): AgentRole {
 }
 
 /**
- * StreamRouter manages the routing of SDK stream messages to agent widgets.
+ * StreamRouter manages agent context for message routing.
  * It maintains a context stack to track which agent is currently active,
  * enabling correct message routing even with nested agent execution.
  */
 export class StreamRouter {
   private contextStack: AgentContext[] = [];
-  private widgetManager: WidgetManager | null = null;
   private config: StreamRouterConfig;
-  private autoCloseTimers: Map<string, NodeJS.Timeout> = new Map();
   /** Agent ID mapper for routing subagent messages */
   private idMapper: AgentIdMapper = createAgentIdMapper();
-  /** Section tracker for message grouping */
-  private sectionTracker: SectionTracker = createSectionTracker();
 
   constructor(config: Partial<StreamRouterConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
   /**
-   * Set the WidgetManager instance for routing messages
-   */
-  setWidgetManager(widgetManager: WidgetManager): void {
-    this.widgetManager = widgetManager;
-  }
-
-  /**
    * Push a new agent context onto the stack (called on SubagentStart)
-   * Creates a widget for the agent if WidgetManager is available
    *
    * @param agentId - SDK's agent_id
    * @param agentType - Agent type string
@@ -164,15 +140,6 @@ export class StreamRouter {
       this.idMapper.setTranscriptMapping(transcriptAgentId, agentId);
     }
 
-    // Create widget for this agent
-    if (this.widgetManager) {
-      const index = this.widgetManager.getWidgetCount();
-      await this.widgetManager.createWidget(agentId, normalizedRole, index);
-
-      // Send initial thinking status
-      this.widgetManager.sendStatusToWidget(agentId, 'thinking');
-    }
-
     console.log(
       `[StreamRouter] Agent started: ${normalizedRole} (${agentId}), ` +
       `stack depth: ${this.contextStack.length}`
@@ -183,7 +150,6 @@ export class StreamRouter {
 
   /**
    * Pop an agent context from the stack (called on SubagentStop)
-   * Schedules auto-close for the widget after delay
    */
   popContext(agentId: string): AgentContext | undefined {
     const idx = this.contextStack.findIndex((c) => c.agentId === agentId);
@@ -198,25 +164,6 @@ export class StreamRouter {
     // Clean up toolUseId mapping
     if (context.toolUseId) {
       this.idMapper.removeToolUseMapping(context.toolUseId);
-    }
-
-    // Reset section tracking for this agent
-    this.sectionTracker.resetSection(agentId);
-
-    // Mark widget as complete
-    if (this.widgetManager) {
-      this.widgetManager.sendStatusToWidget(agentId, 'complete');
-      this.widgetManager.sendMessageToWidget({
-        agentId,
-        role: context.normalizedRole,
-        type: 'complete',
-        content: 'Task completed',
-        timestamp: Date.now(),
-        isNewSection: true, // Mark as new section for completion
-      });
-
-      // Schedule auto-close after delay
-      this.scheduleAutoClose(agentId);
     }
 
     console.log(
@@ -298,251 +245,12 @@ export class StreamRouter {
   }
 
   /**
-   * Route a message to the currently active agent's widget
-   * @deprecated Use routeMessageByToolUseId for accurate subagent routing
-   */
-  routeMessage(type: WidgetMessageType, content: string): void {
-    const agent = this.getCurrentAgent();
-
-    console.log('[StreamRouter] routeMessage called:',
-      'type:', type,
-      'content length:', content?.length || 0,
-      'hasAgent:', !!agent,
-      'agentId:', agent?.agentId || 'none',
-      'hasWidgetManager:', !!this.widgetManager);
-
-    if (!agent) {
-      // No active agent - this might be the main conversation
-      console.log('[StreamRouter] No active agent, message not routed');
-      return;
-    }
-
-    if (!this.widgetManager) {
-      console.warn('[StreamRouter] WidgetManager not set, cannot route message');
-      return;
-    }
-
-    // Cancel any pending auto-close timer (agent is still active)
-    this.cancelAutoClose(agent.agentId);
-
-    // Track section changes for accumulated messages
-    const sectionResult = this.sectionTracker.trackSection(agent.agentId, type);
-    const { sectionId, isNewSection } = sectionResult;
-
-    const message: WidgetMessage = {
-      agentId: agent.agentId,
-      role: agent.normalizedRole,
-      type,
-      content,
-      timestamp: Date.now(),
-      sectionId,
-      isNewSection,
-    };
-
-    this.widgetManager.sendMessageToWidget(message);
-  }
-
-  /**
-   * Route a message to a specific agent using parentToolUseId
-   * This is the primary routing method for subagent messages
-   *
-   * @param type - Message type (thinking, speaking, tool_use, complete)
-   * @param content - Message content
-   * @param parentToolUseId - The tool_use_id that spawned the subagent
-   * @returns true if message was routed to a subagent, false otherwise
-   */
-  routeMessageByToolUseId(
-    type: WidgetMessageType,
-    content: string,
-    parentToolUseId?: string
-  ): boolean {
-    // If no parentToolUseId, this is a main agent message, don't route to widgets
-    if (!parentToolUseId) {
-      console.log('[StreamRouter] No parentToolUseId, message is from main agent');
-      return false;
-    }
-
-    const agent = this.getAgentByToolUseId(parentToolUseId);
-
-    console.log('[StreamRouter] routeMessageByToolUseId:',
-      'type:', type,
-      'content length:', content?.length || 0,
-      'parentToolUseId:', parentToolUseId,
-      'foundAgent:', agent?.agentId || 'none');
-
-    if (!agent) {
-      console.log('[StreamRouter] No agent found for parentToolUseId:', parentToolUseId);
-      return false;
-    }
-
-    if (!this.widgetManager) {
-      console.warn('[StreamRouter] WidgetManager not set, cannot route message');
-      return false;
-    }
-
-    // Cancel any pending auto-close timer (agent is still active)
-    this.cancelAutoClose(agent.agentId);
-
-    // Track section changes for accumulated messages
-    const sectionResult = this.sectionTracker.trackSection(agent.agentId, type);
-    const { sectionId, isNewSection } = sectionResult;
-    if (isNewSection) {
-      console.log(`[StreamRouter] New section started: ${sectionId} (type: ${type})`);
-    }
-
-    const message: WidgetMessage = {
-      agentId: agent.agentId,
-      role: agent.normalizedRole,
-      type,
-      content,
-      timestamp: Date.now(),
-      sectionId,
-      isNewSection,
-    };
-
-    this.widgetManager.sendMessageToWidget(message);
-    return true;
-  }
-
-  /**
-   * Route a status update to a specific agent using parentToolUseId
-   */
-  routeStatusByToolUseId(status: AgentStatus, parentToolUseId?: string): boolean {
-    if (!parentToolUseId) {
-      return false;
-    }
-
-    const agent = this.getAgentByToolUseId(parentToolUseId);
-    if (!agent || !this.widgetManager) {
-      return false;
-    }
-
-    this.widgetManager.sendStatusToWidget(agent.agentId, status);
-    return true;
-  }
-
-  /**
-   * Route a status update to the currently active agent's widget
-   */
-  routeStatus(status: AgentStatus): void {
-    const agent = this.getCurrentAgent();
-
-    if (!agent || !this.widgetManager) {
-      return;
-    }
-
-    this.widgetManager.sendStatusToWidget(agent.agentId, status);
-  }
-
-  /**
-   * Route an error to the specified agent's widget (or current if not specified)
-   * Per design decision: errors only go to the specific agent, not broadcast
-   */
-  routeError(content: string, agentId?: string): void {
-    const targetId = agentId || this.getCurrentAgent()?.agentId;
-
-    if (!targetId || !this.widgetManager) {
-      return;
-    }
-
-    const agent = this.contextStack.find((c) => c.agentId === targetId);
-    if (!agent) {
-      return;
-    }
-
-    this.widgetManager.sendStatusToWidget(targetId, 'error');
-    this.widgetManager.sendMessageToWidget({
-      agentId: targetId,
-      role: agent.normalizedRole,
-      type: 'speaking',
-      content: `Error: ${content}`,
-      timestamp: Date.now(),
-    });
-
-    // Schedule auto-close after error
-    this.scheduleAutoClose(targetId);
-  }
-
-  /**
-   * Broadcast a message to all active agent widgets
-   * Use sparingly - prefer routeMessage for targeted delivery
-   */
-  broadcastMessage(type: WidgetMessageType, content: string): void {
-    if (!this.widgetManager) {
-      return;
-    }
-
-    for (const agent of this.contextStack) {
-      this.widgetManager.sendMessageToWidget({
-        agentId: agent.agentId,
-        role: agent.normalizedRole,
-        type,
-        content,
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  /**
-   * Broadcast a status update to all active agent widgets
-   */
-  broadcastStatus(status: AgentStatus): void {
-    if (!this.widgetManager) {
-      return;
-    }
-
-    for (const agent of this.contextStack) {
-      this.widgetManager.sendStatusToWidget(agent.agentId, status);
-    }
-  }
-
-  /**
-   * Schedule auto-close for a widget after the configured delay
-   */
-  private scheduleAutoClose(agentId: string): void {
-    // Cancel any existing timer
-    this.cancelAutoClose(agentId);
-
-    const timer = setTimeout(() => {
-      if (this.widgetManager) {
-        this.widgetManager.closeWidget(agentId);
-      }
-      this.autoCloseTimers.delete(agentId);
-    }, this.config.autoCloseDelayMs);
-
-    this.autoCloseTimers.set(agentId, timer);
-  }
-
-  /**
-   * Cancel a pending auto-close timer
-   */
-  private cancelAutoClose(agentId: string): void {
-    const timer = this.autoCloseTimers.get(agentId);
-    if (timer) {
-      clearTimeout(timer);
-      this.autoCloseTimers.delete(agentId);
-    }
-  }
-
-  /**
-   * Clear all contexts and close all widgets
+   * Clear all contexts
    */
   clear(): void {
-    // Cancel all auto-close timers
-    for (const timer of this.autoCloseTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.autoCloseTimers.clear();
-
-    // Close all widgets
-    if (this.widgetManager) {
-      this.widgetManager.closeAllWidgets();
-    }
-
     this.contextStack = [];
     this.idMapper.clear();
-    this.sectionTracker.clear();
-    console.log('[StreamRouter] Cleared all agent contexts, ID mappings, and sections');
+    console.log('[StreamRouter] Cleared all agent contexts and ID mappings');
   }
 
   /**
