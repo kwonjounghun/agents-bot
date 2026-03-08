@@ -46,8 +46,10 @@ export const teamAddTaskTool: ToolDefinition = {
     const stage = (args.stage as TeamStage) || 'team-exec';
     const assignee = args.assignee as string | undefined;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const state = await readState('team', cwd) as TeamState | null;
+    const state = await readState('team', cwd, stateOptions) as TeamState | null;
     if (!state || !state.active) {
       return {
         content: [{ type: 'text', text: 'No active team. Use team_create first.' }]
@@ -65,7 +67,7 @@ export const teamAddTaskTool: ToolDefinition = {
     };
 
     state.tasks.push(task);
-    await writeState('team', state, cwd);
+    await writeState('team', state, cwd, stateOptions);
 
     return {
       content: [{
@@ -106,8 +108,10 @@ export const teamAssignTaskTool: ToolDefinition = {
     const taskId = args.taskId as string;
     const memberName = args.memberName as string;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const state = await readState('team', cwd) as TeamState | null;
+    const state = await readState('team', cwd, stateOptions) as TeamState | null;
     if (!state || !state.active) {
       return {
         content: [{ type: 'text', text: 'No active team.' }]
@@ -133,7 +137,7 @@ export const teamAssignTaskTool: ToolDefinition = {
     member.status = 'working';
     member.currentTask = taskId;
 
-    await writeState('team', state, cwd);
+    await writeState('team', state, cwd, stateOptions);
 
     return {
       content: [{
@@ -170,8 +174,10 @@ export const teamCompleteTaskTool: ToolDefinition = {
     const taskId = args.taskId as string;
     const result = args.result as string | undefined;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const state = await readState('team', cwd) as TeamState | null;
+    const state = await readState('team', cwd, stateOptions) as TeamState | null;
     if (!state || !state.active) {
       return {
         content: [{ type: 'text', text: 'No active team.' }]
@@ -198,7 +204,7 @@ export const teamCompleteTaskTool: ToolDefinition = {
       }
     }
 
-    await writeState('team', state, cwd);
+    await writeState('team', state, cwd, stateOptions);
 
     // Check if all tasks in current stage are complete
     const stageTasks = state.tasks.filter(t => t.stage === state.currentPhase);

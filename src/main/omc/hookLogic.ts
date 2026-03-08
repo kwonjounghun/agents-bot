@@ -450,9 +450,26 @@ export function getSkillStatePath(cwd: string): string {
 
 /**
  * Get a mode state file path.
+ * When sessionId is provided, uses session-scoped path.
  */
-export function getModeStatePath(cwd: string, mode: string): string {
+export function getModeStatePath(cwd: string, mode: string, sessionId?: string): string {
+  if (sessionId) {
+    return `${cwd}/.omc/state/sessions/${sessionId}/${mode}-state.json`;
+  }
   return `${cwd}/.omc/state/${mode}-state.json`;
+}
+
+/**
+ * Get all possible mode state paths (session-scoped first, then legacy).
+ * Useful for fallback reading.
+ */
+export function getModeStatePaths(cwd: string, mode: string, sessionId?: string): string[] {
+  const paths: string[] = [];
+  if (sessionId) {
+    paths.push(`${cwd}/.omc/state/sessions/${sessionId}/${mode}-state.json`);
+  }
+  paths.push(`${cwd}/.omc/state/${mode}-state.json`);
+  return paths;
 }
 
 /**

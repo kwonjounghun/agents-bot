@@ -33,7 +33,7 @@ import {
   checkShouldPreventStop,
   getProjectMemoryPath,
   getSkillStatePath,
-  getModeStatePath,
+  getModeStatePaths,
   getSkillDefinitionPaths,
   PERSISTENT_MODES,
   type ProjectMemory,
@@ -245,30 +245,39 @@ function createSessionStartHook(
 ): HookCallback {
   return async (input: HookInput): Promise<HookOutput> => {
     const cwd = input.cwd || options.workingDirectory;
+    const sessionId = input.session_id || options.sessionId;
 
     // Read project memory (I/O)
     const projectMemoryPath = getProjectMemoryPath(cwd);
     const projectMemory = readJsonFile<ProjectMemory>(projectMemoryPath);
 
-    // Get active modes (I/O via module)
+    // Get active modes - check session-scoped paths first, then legacy
     let activeModes: string[] = [];
-    if (modules.listActiveModes) {
-      try {
-        activeModes = await modules.listActiveModes(cwd) || [];
-
-        // Side effect: callback invocations
-        for (const mode of activeModes) {
-          if (options.onModeChanged) {
-            options.onModeChanged(mode, true);
+    try {
+      // Check state files directly with session-scoped paths
+      for (const mode of PERSISTENT_MODES) {
+        const modePaths = getModeStatePaths(cwd, mode, sessionId);
+        for (const modePath of modePaths) {
+          const state = readJsonFile<ModeState>(modePath);
+          if (state?.active) {
+            activeModes.push(mode);
+            break; // Found in this path, move to next mode
           }
         }
-
-        if (activeModes.length > 0) {
-          console.log('[OMCHook] Active modes:', activeModes.join(', '));
-        }
-      } catch (error) {
-        console.error('[OMCHook] Error checking active modes:', error);
       }
+
+      // Side effect: callback invocations
+      for (const mode of activeModes) {
+        if (options.onModeChanged) {
+          options.onModeChanged(mode, true);
+        }
+      }
+
+      if (activeModes.length > 0) {
+        console.log('[OMCHook] Active modes:', activeModes.join(', '));
+      }
+    } catch (error) {
+      console.error('[OMCHook] Error checking active modes:', error);
     }
 
     if (projectMemory) {
@@ -305,16 +314,21 @@ function createStopHook(
 ): HookCallback {
   return async (input: HookInput): Promise<HookOutput> => {
     const cwd = input.cwd || options.workingDirectory;
+    const sessionId = input.session_id || options.sessionId;
 
     // Read skill state (I/O)
     const skillStatePath = getSkillStatePath(cwd);
     const skillState = readJsonFile<ModeState>(skillStatePath);
 
-    // Read mode states (I/O)
+    // Read mode states (I/O) - try session-scoped path first, then legacy
     const modeStates: Array<{ mode: string; state: ModeState }> = [];
     for (const mode of PERSISTENT_MODES) {
-      const modePath = getModeStatePath(cwd, mode);
-      const state = readJsonFile<ModeState>(modePath);
+      const modePaths = getModeStatePaths(cwd, mode, sessionId);
+      let state: ModeState | null = null;
+      for (const modePath of modePaths) {
+        state = readJsonFile<ModeState>(modePath);
+        if (state) break; // Found in this path
+      }
       if (state) {
         modeStates.push({ mode, state });
       }

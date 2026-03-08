@@ -38,8 +38,10 @@ export const teamTransitionTool: ToolDefinition = {
     const nextStage = args.nextStage as string;
     const reason = args.reason as string || '';
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const state = await readState('team', cwd) as TeamState | null;
+    const state = await readState('team', cwd, stateOptions) as TeamState | null;
     if (!state || !state.active) {
       return {
         content: [{ type: 'text', text: 'No active team.' }]
@@ -58,11 +60,11 @@ export const teamTransitionTool: ToolDefinition = {
     // Handle terminal states
     if (nextStage === 'complete' || nextStage === 'failed') {
       state.active = false;
-      await writeState('team', state, cwd);
+      await writeState('team', state, cwd, stateOptions);
 
       // Clear linked ralph if present
       if (state.linkedRalph) {
-        await clearState('ralph', cwd);
+        await clearState('ralph', cwd, stateOptions);
       }
 
       return {
@@ -84,7 +86,7 @@ ${reason ? `Reason: ${reason}` : ''}`
       state.fixLoopCount++;
       if (state.fixLoopCount > state.maxFixLoops) {
         state.active = false;
-        await writeState('team', state, cwd);
+        await writeState('team', state, cwd, stateOptions);
         return {
           content: [{
             type: 'text',
@@ -114,7 +116,7 @@ Use team_create to start a new team.`
       status: 'idle' as const
     }));
 
-    await writeState('team', state, cwd);
+    await writeState('team', state, cwd, stateOptions);
 
     return {
       content: [{
@@ -147,8 +149,10 @@ export const teamStatusTool: ToolDefinition = {
   },
   handler: async (args, context) => {
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const state = await readState('team', cwd) as TeamState | null;
+    const state = await readState('team', cwd, stateOptions) as TeamState | null;
     if (!state) {
       return {
         content: [{ type: 'text', text: 'No team state found. Use team_create to start a team.' }]
@@ -232,8 +236,10 @@ export const teamSendMessageTool: ToolDefinition = {
     const messageType = args.messageType as string;
     const content = args.content as string;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const state = await readState('team', cwd) as TeamState | null;
+    const state = await readState('team', cwd, stateOptions) as TeamState | null;
     if (!state || !state.active) {
       return {
         content: [{ type: 'text', text: 'No active team.' }]
@@ -260,7 +266,7 @@ export const teamSendMessageTool: ToolDefinition = {
         const member = state.members.find(m => m.name === recipient);
         if (member) member.status = 'idle';
       }
-      await writeState('team', state, cwd);
+      await writeState('team', state, cwd, stateOptions);
     }
 
     return {

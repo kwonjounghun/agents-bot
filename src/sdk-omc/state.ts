@@ -3,6 +3,9 @@
  *
  * Utilities for managing mode state (autopilot, ralph, team, etc.)
  * State is persisted to .omc/state/ directory.
+ *
+ * Session-scoped state: .omc/state/sessions/{sessionId}/{mode}-state.json
+ * Legacy fallback: .omc/state/{mode}-state.json
  */
 
 import * as fs from 'fs';
@@ -10,24 +13,36 @@ import * as path from 'path';
 import type { ModeState, SkillMode, TeamState, RalphState, AutopilotState } from './types';
 
 /**
+ * State options for session-scoped operations
+ */
+export interface StateOptions {
+  sessionId?: string;
+}
+
+/**
  * Get the state directory path
  */
-export function getStateDir(workingDirectory: string): string {
-  return path.join(workingDirectory, '.omc', 'state');
+export function getStateDir(workingDirectory: string, sessionId?: string): string {
+  const baseDir = path.join(workingDirectory, '.omc', 'state');
+  if (sessionId) {
+    return path.join(baseDir, 'sessions', sessionId);
+  }
+  return baseDir;
 }
 
 /**
  * Get the state file path for a mode
+ * When sessionId is provided, uses session-scoped path
  */
-export function getStatePath(mode: SkillMode, workingDirectory: string): string {
-  return path.join(getStateDir(workingDirectory), `${mode}-state.json`);
+export function getStatePath(mode: SkillMode, workingDirectory: string, sessionId?: string): string {
+  return path.join(getStateDir(workingDirectory, sessionId), `${mode}-state.json`);
 }
 
 /**
  * Ensure state directory exists
  */
-export function ensureStateDir(workingDirectory: string): void {
-  const stateDir = getStateDir(workingDirectory);
+export function ensureStateDir(workingDirectory: string, sessionId?: string): void {
+  const stateDir = getStateDir(workingDirectory, sessionId);
   if (!fs.existsSync(stateDir)) {
     fs.mkdirSync(stateDir, { recursive: true });
   }
@@ -35,19 +50,36 @@ export function ensureStateDir(workingDirectory: string): void {
 
 /**
  * Read state for a mode
+ * When sessionId is provided, reads from session-scoped path first, then falls back to legacy
  */
 export async function readState<T extends ModeState = ModeState>(
   mode: SkillMode,
-  workingDirectory: string
+  workingDirectory: string,
+  options?: StateOptions
 ): Promise<T | null> {
-  const statePath = getStatePath(mode, workingDirectory);
+  const sessionId = options?.sessionId;
 
+  // Try session-scoped path first if sessionId provided
+  if (sessionId) {
+    const sessionPath = getStatePath(mode, workingDirectory, sessionId);
+    try {
+      if (fs.existsSync(sessionPath)) {
+        const content = fs.readFileSync(sessionPath, 'utf-8');
+        return JSON.parse(content) as T;
+      }
+    } catch (error) {
+      console.error(`[SDK-OMC] Error reading ${mode} state from session ${sessionId}:`, error);
+    }
+  }
+
+  // Fall back to legacy path
+  const legacyPath = getStatePath(mode, workingDirectory);
   try {
-    if (!fs.existsSync(statePath)) {
+    if (!fs.existsSync(legacyPath)) {
       return null;
     }
 
-    const content = fs.readFileSync(statePath, 'utf-8');
+    const content = fs.readFileSync(legacyPath, 'utf-8');
     return JSON.parse(content) as T;
   } catch (error) {
     console.error(`[SDK-OMC] Error reading ${mode} state:`, error);
@@ -57,14 +89,17 @@ export async function readState<T extends ModeState = ModeState>(
 
 /**
  * Write state for a mode
+ * When sessionId is provided, writes to session-scoped path
  */
 export async function writeState<T extends ModeState = ModeState>(
   mode: SkillMode,
   state: T,
-  workingDirectory: string
+  workingDirectory: string,
+  options?: StateOptions
 ): Promise<void> {
-  ensureStateDir(workingDirectory);
-  const statePath = getStatePath(mode, workingDirectory);
+  const sessionId = options?.sessionId;
+  ensureStateDir(workingDirectory, sessionId);
+  const statePath = getStatePath(mode, workingDirectory, sessionId);
 
   try {
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
@@ -76,12 +111,15 @@ export async function writeState<T extends ModeState = ModeState>(
 
 /**
  * Clear state for a mode
+ * When sessionId is provided, clears from session-scoped path
  */
 export async function clearState(
   mode: SkillMode,
-  workingDirectory: string
+  workingDirectory: string,
+  options?: StateOptions
 ): Promise<void> {
-  const statePath = getStatePath(mode, workingDirectory);
+  const sessionId = options?.sessionId;
+  const statePath = getStatePath(mode, workingDirectory, sessionId);
 
   try {
     if (fs.existsSync(statePath)) {
@@ -95,15 +133,15 @@ export async function clearState(
 
 /**
  * List all active modes
+ * When sessionId is provided, checks session-scoped state
  */
-export async function listActiveModes(workingDirectory: string): Promise<SkillMode[]> {
-  const stateDir = getStateDir(workingDirectory);
+export async function listActiveModes(workingDirectory: string, options?: StateOptions): Promise<SkillMode[]> {
   const activeModes: SkillMode[] = [];
 
   const modes: SkillMode[] = ['autopilot', 'ralph', 'team', 'ultrawork', 'ultrapilot', 'pipeline', 'plan'];
 
   for (const mode of modes) {
-    const state = await readState(mode, workingDirectory);
+    const state = await readState(mode, workingDirectory, options);
     if (state?.active) {
       activeModes.push(mode);
     }
@@ -113,22 +151,42 @@ export async function listActiveModes(workingDirectory: string): Promise<SkillMo
 }
 
 /**
+ * List all active sessions
+ */
+export async function listActiveSessions(workingDirectory: string): Promise<string[]> {
+  const sessionsDir = path.join(workingDirectory, '.omc', 'state', 'sessions');
+
+  try {
+    if (!fs.existsSync(sessionsDir)) {
+      return [];
+    }
+
+    const entries = fs.readdirSync(sessionsDir, { withFileTypes: true });
+    return entries
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Check if any mode is active
  */
-export async function hasActiveModes(workingDirectory: string): Promise<boolean> {
-  const activeModes = await listActiveModes(workingDirectory);
+export async function hasActiveModes(workingDirectory: string, options?: StateOptions): Promise<boolean> {
+  const activeModes = await listActiveModes(workingDirectory, options);
   return activeModes.length > 0;
 }
 
 /**
  * Get status of all modes
  */
-export async function getModeStatus(workingDirectory: string): Promise<Record<SkillMode, ModeState | null>> {
+export async function getModeStatus(workingDirectory: string, options?: StateOptions): Promise<Record<SkillMode, ModeState | null>> {
   const modes: SkillMode[] = ['autopilot', 'ralph', 'team', 'ultrawork', 'ultrapilot', 'pipeline', 'plan'];
   const status: Record<string, ModeState | null> = {};
 
   for (const mode of modes) {
-    status[mode] = await readState(mode, workingDirectory);
+    status[mode] = await readState(mode, workingDirectory, options);
   }
 
   return status as Record<SkillMode, ModeState | null>;
@@ -189,15 +247,16 @@ export function createTeamState(teamName: string, agentCount: number, task: stri
  */
 export async function incrementIteration(
   mode: SkillMode,
-  workingDirectory: string
+  workingDirectory: string,
+  options?: StateOptions
 ): Promise<number> {
-  const state = await readState(mode, workingDirectory);
+  const state = await readState(mode, workingDirectory, options);
   if (!state) {
     throw new Error(`No active ${mode} state`);
   }
 
   const newIteration = (state.iteration || 0) + 1;
-  await writeState(mode, { ...state, iteration: newIteration }, workingDirectory);
+  await writeState(mode, { ...state, iteration: newIteration }, workingDirectory, options);
 
   return newIteration;
 }
@@ -208,14 +267,15 @@ export async function incrementIteration(
 export async function updatePhase(
   mode: SkillMode,
   phase: string,
-  workingDirectory: string
+  workingDirectory: string,
+  options?: StateOptions
 ): Promise<void> {
-  const state = await readState(mode, workingDirectory);
+  const state = await readState(mode, workingDirectory, options);
   if (!state) {
     throw new Error(`No active ${mode} state`);
   }
 
-  await writeState(mode, { ...state, currentPhase: phase }, workingDirectory);
+  await writeState(mode, { ...state, currentPhase: phase }, workingDirectory, options);
 }
 
 /**
@@ -223,9 +283,10 @@ export async function updatePhase(
  */
 export async function completeMode(
   mode: SkillMode,
-  workingDirectory: string
+  workingDirectory: string,
+  options?: StateOptions
 ): Promise<void> {
-  const state = await readState(mode, workingDirectory);
+  const state = await readState(mode, workingDirectory, options);
   if (!state) {
     return;
   }
@@ -235,7 +296,7 @@ export async function completeMode(
     active: false,
     completedAt: new Date().toISOString(),
     currentPhase: 'completed'
-  }, workingDirectory);
+  }, workingDirectory, options);
 }
 
 /**
@@ -244,9 +305,10 @@ export async function completeMode(
 export async function failMode(
   mode: SkillMode,
   error: string,
-  workingDirectory: string
+  workingDirectory: string,
+  options?: StateOptions
 ): Promise<void> {
-  const state = await readState(mode, workingDirectory);
+  const state = await readState(mode, workingDirectory, options);
   if (!state) {
     return;
   }
@@ -257,5 +319,5 @@ export async function failMode(
     completedAt: new Date().toISOString(),
     currentPhase: 'failed',
     error
-  }, workingDirectory);
+  }, workingDirectory, options);
 }

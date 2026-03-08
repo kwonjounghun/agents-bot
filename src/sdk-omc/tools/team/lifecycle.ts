@@ -48,6 +48,8 @@ export const teamCreateTool: ToolDefinition = {
     const memberCount = (args.memberCount as number) || 3;
     const linkedRalph = args.linkedRalph as boolean || false;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
     ensureTeamDirectory(cwd);
 
@@ -82,7 +84,7 @@ export const teamCreateTool: ToolDefinition = {
     }
 
     // Write team state
-    await writeState('team', teamState, cwd);
+    await writeState('team', teamState, cwd, stateOptions);
 
     // If linked to ralph, also create ralph state
     if (linkedRalph) {
@@ -95,7 +97,7 @@ export const teamCreateTool: ToolDefinition = {
         currentPhase: 'team-execution',
         linkedTeam: true,
         teamName
-      }, cwd);
+      }, cwd, stateOptions);
     }
 
     return {
@@ -145,8 +147,10 @@ export const teamDeleteTool: ToolDefinition = {
   handler: async (args, context) => {
     const force = args.force as boolean || false;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const state = await readState('team', cwd) as TeamState | null;
+    const state = await readState('team', cwd, stateOptions) as TeamState | null;
     if (!state) {
       return {
         content: [{ type: 'text', text: 'No team to delete.' }]
@@ -167,11 +171,11 @@ Use force=true to delete anyway.`
     const teamName = state.teamName;
 
     // Clear team state
-    await clearState('team', cwd);
+    await clearState('team', cwd, stateOptions);
 
     // Clear linked ralph if present
     if (state.linkedRalph) {
-      await clearState('ralph', cwd);
+      await clearState('ralph', cwd, stateOptions);
     }
 
     return {

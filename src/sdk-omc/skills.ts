@@ -22,13 +22,21 @@ import {
 import type { SkillMode, ModeState, SkillResult } from './types';
 
 /**
+ * Tool execution context
+ */
+export interface ToolContext {
+  cwd?: string;
+  session_id?: string;
+}
+
+/**
  * Tool definition interface (compatible with SDK's tool() helper)
  */
 export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  handler: (args: Record<string, unknown>, context?: { cwd?: string }) => Promise<ToolResult>;
+  handler: (args: Record<string, unknown>, context?: ToolContext) => Promise<ToolResult>;
 }
 
 interface ToolResult {
@@ -71,11 +79,13 @@ export const autopilotTool: ToolDefinition = {
     const goal = args.goal as string;
     const maxIterations = (args.maxIterations as number) || 10;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
     // Create autopilot state
     const state = createAutopilotState(goal);
     state.maxIterations = maxIterations;
-    await writeState('autopilot', state, cwd);
+    await writeState('autopilot', state, cwd, stateOptions);
 
     return {
       content: [{
@@ -124,10 +134,12 @@ export const ralphTool: ToolDefinition = {
     const task = args.task as string;
     const maxIterations = (args.maxIterations as number) || 20;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
     // Create ralph state
     const state = createRalphState(task, maxIterations);
-    await writeState('ralph', state, cwd);
+    await writeState('ralph', state, cwd, stateOptions);
 
     return {
       content: [{
@@ -173,6 +185,8 @@ export const ultraworkTool: ToolDefinition = {
   handler: async (args, context) => {
     const tasks = args.tasks as string[];
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
     // Create ultrawork state
     await writeState('ultrawork', {
@@ -180,7 +194,7 @@ export const ultraworkTool: ToolDefinition = {
       startedAt: new Date().toISOString(),
       currentPhase: 'parallel-execution',
       taskDescription: `Parallel execution of ${tasks.length} tasks`
-    }, cwd);
+    }, cwd, stateOptions);
 
     return {
       content: [{
@@ -229,6 +243,8 @@ export const teamTool: ToolDefinition = {
     const agentCount = (args.agentCount as number) || 3;
     const agentType = (args.agentType as string) || 'executor';
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
     // Generate team name from task
     const teamName = task
@@ -239,7 +255,7 @@ export const teamTool: ToolDefinition = {
     // Create team state
     const state = createTeamState(teamName, agentCount, task);
     state.agentTypes = agentType;
-    await writeState('team', state, cwd);
+    await writeState('team', state, cwd, stateOptions);
 
     return {
       content: [{
@@ -283,8 +299,10 @@ export const stateReadTool: ToolDefinition = {
   handler: async (args, context) => {
     const mode = args.mode as SkillMode;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const state = await readState(mode, cwd);
+    const state = await readState(mode, cwd, stateOptions);
 
     if (!state) {
       return {
@@ -329,8 +347,10 @@ export const stateWriteTool: ToolDefinition = {
     const mode = args.mode as SkillMode;
     const state = args.state as ModeState;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    await writeState(mode, state, cwd);
+    await writeState(mode, state, cwd, stateOptions);
 
     return {
       content: [{
@@ -361,8 +381,10 @@ export const stateClearTool: ToolDefinition = {
   handler: async (args, context) => {
     const mode = args.mode as SkillMode;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    await clearState(mode, cwd);
+    await clearState(mode, cwd, stateOptions);
 
     return {
       content: [{
@@ -385,8 +407,10 @@ export const listActiveModesTool: ToolDefinition = {
   },
   handler: async (args, context) => {
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
-    const activeModes = await listActiveModes(cwd);
+    const activeModes = await listActiveModes(cwd, stateOptions);
 
     if (activeModes.length === 0) {
       return {
@@ -430,13 +454,14 @@ export const cancelModeTool: ToolDefinition = {
   },
   handler: async (args, context) => {
     const mode = args.mode as string;
-    const force = args.force as boolean;
     const cwd = context?.cwd || process.cwd();
+    const sessionId = context?.session_id;
+    const stateOptions = sessionId ? { sessionId } : undefined;
 
     if (mode === 'all') {
-      const activeModes = await listActiveModes(cwd);
+      const activeModes = await listActiveModes(cwd, stateOptions);
       for (const m of activeModes) {
-        await clearState(m, cwd);
+        await clearState(m, cwd, stateOptions);
       }
       return {
         content: [{
@@ -446,7 +471,7 @@ export const cancelModeTool: ToolDefinition = {
       };
     }
 
-    await clearState(mode as SkillMode, cwd);
+    await clearState(mode as SkillMode, cwd, stateOptions);
 
     return {
       content: [{
