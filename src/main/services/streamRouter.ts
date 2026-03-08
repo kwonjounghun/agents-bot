@@ -5,6 +5,21 @@
  * This module handles:
  * - Tracking active agent context via a stack (for nested agent support)
  * - Agent ID mapping for transcript and toolUseId routing
+ *
+ * ============================================================================
+ * IMPORTANT: ID 매칭 관련 주의사항
+ * ============================================================================
+ * SDK agentId와 JSONL/파일경로 agentId는 형식이 다릅니다!
+ *
+ * - SDK agentId: 전체 UUID/긴 해시 (예: "toolu_01ABCdef123456")
+ * - JSONL agentId: 7자리 짧은 해시 (예: "ab215e8")
+ * - transcriptAgentId: JSONL의 agentId와 동일
+ *
+ * getAgentByTranscriptId()는 transcriptAgentId -> SDK agentId 매핑을 처리합니다.
+ * 매핑은 pushContext() 호출 시 설정됩니다.
+ *
+ * 자세한 내용은 src/main/services/utils/agentIdMatcher.ts 참조
+ * ============================================================================
  */
 
 import type { AgentRole } from '../../shared/types';

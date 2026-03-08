@@ -9,6 +9,53 @@
  *
  * Strategy: Watch all subagent files and route messages based on the agentId
  * field embedded in each JSONL line (claude-esp style).
+ *
+ * ============================================================================
+ * IMPORTANT: ID 매칭 관련 주의사항
+ * ============================================================================
+ * SDK agentId와 JSONL/파일경로 agentId는 형식이 다릅니다!
+ * 자세한 내용은 src/main/services/utils/agentIdMatcher.ts 참조
+ *
+ * - SDK agentId: 전체 UUID/긴 해시 (예: "toolu_01ABCdef123456")
+ * - JSONL agentId: 7자리 짧은 해시 (예: "ab215e8")
+ * - 파일 경로: agent-a<hash>.jsonl (예: agent-a1b2c3d4e5f6.jsonl)
+ *
+ * 반드시 agentIdMatcher.ts의 매칭 함수를 사용하세요!
+ * ============================================================================
+ *
+ * ============================================================================
+ * CRITICAL: 캐시 초기화 관련 - 절대 삭제하지 마세요! (7번째 버그 수정)
+ * ============================================================================
+ * startWatching() 메서드에서 다음 3가지 캐시를 반드시 초기화해야 합니다:
+ *
+ * 1. this.lastDirScan = 0
+ *    - 이유: 디렉토리 스캔은 5초(DIR_SCAN_INTERVAL_MS)마다만 실행됩니다.
+ *    - 문제: 새 에이전트가 시작되면 새 JSONL 파일이 생성되지만,
+ *           다음 스캔까지 5초를 기다려야 파일을 발견합니다.
+ *    - 해결: lastDirScan을 0으로 리셋하면 즉시 디렉토리를 재스캔합니다.
+ *
+ * 2. this.subagentsDir = null
+ *    - 이유: 세션이 바뀌면 subagents 디렉토리 경로도 바뀝니다.
+ *           (예: .../session-abc/subagents -> .../session-xyz/subagents)
+ *    - 문제: subagentsDir가 캐시되어 있으면 이전 세션 디렉토리를
+ *           계속 스캔하여 새 세션의 파일을 찾지 못합니다.
+ *    - 해결: subagentsDir를 null로 리셋하면 getSubagentsDir()가
+ *           최신 세션 디렉토리를 다시 찾습니다.
+ *
+ * 3. this.cachedFiles.clear()
+ *    - 이유: cachedFiles는 이전 세션의 파일 경로를 포함합니다.
+ *    - 문제: 세션이 바뀌면 이전 파일들은 더 이상 유효하지 않습니다.
+ *    - 해결: cachedFiles를 클리어하면 새 세션의 파일만 추적합니다.
+ *
+ * 이 3가지 초기화 중 하나라도 빠지면:
+ * - 서브에이전트 메시지가 UI에 표시되지 않습니다.
+ * - "NEW CONTENT DETECTED" 로그가 나타나지 않습니다.
+ * - 디버깅이 매우 어렵습니다 (파일은 있지만 콘텐츠가 안 보임).
+ *
+ * 관련 버그 히스토리:
+ * - 1~6차: ID 매칭 문제로 잘못 분석
+ * - 7차: 캐시 초기화 문제 발견 및 수정 (이 주석 추가)
+ * ============================================================================
  */
 
 import { open, stat, readdir } from 'fs/promises';
@@ -16,6 +63,12 @@ import { join } from 'path';
 import type { FileHandle } from 'fs/promises';
 import { parseTranscriptLine, type TranscriptMessage } from './parsers/transcriptLineParser';
 import { getSubagentsDir } from './utils/claudeProjectPaths';
+import {
+  extractAgentIdFromFilePath,
+  findMatchingAgentId,
+  resolveEffectiveAgentId,
+  logIdMatchingDebug,
+} from './utils/agentIdMatcher';
 
 // Re-export TranscriptMessage for consumers
 export type { TranscriptMessage } from './parsers/transcriptLineParser';
@@ -99,12 +152,47 @@ export class TranscriptWatcher {
    * The agent's messages will be identified by agentId in the JSONL content
    */
   async startWatching(agentId: string): Promise<boolean> {
-    console.log('[TranscriptWatcher] Start watching for agentId:', agentId);
+    // 디버깅: agentId 형식 분석
+    console.log('[TranscriptWatcher] ========== START WATCHING ==========');
+    console.log('[TranscriptWatcher] agentId:', agentId);
+    console.log('[TranscriptWatcher] agentId length:', agentId.length);
+    console.log('[TranscriptWatcher] agentId first 7 chars:', agentId.substring(0, 7));
+    console.log('[TranscriptWatcher] Current activeAgents:', Array.from(this.activeAgents));
+    console.log('[TranscriptWatcher] Current fileStates count:', this.fileStates.size);
+    console.log('[TranscriptWatcher] ====================================');
 
     // Mark this agent as active
     this.activeAgents.add(agentId);
 
-    // Get subagents directory if not cached
+    // =========================================================================
+    // CRITICAL: 캐시 초기화 - 이 블록을 절대 삭제하거나 수정하지 마세요!
+    // =========================================================================
+    // 이 초기화가 없으면 서브에이전트 메시지가 UI에 표시되지 않습니다.
+    // 자세한 설명은 파일 상단의 "CRITICAL: 캐시 초기화 관련" 주석 참조.
+    //
+    // 문제 증상:
+    // - "NEW CONTENT DETECTED" 로그가 안 나옴
+    // - 파일은 찾지만 콘텐츠가 안 읽힘
+    // - 이전 세션 디렉토리를 계속 스캔함
+    //
+    // 해결: 아래 3줄이 반드시 필요합니다.
+    // =========================================================================
+
+    // (1) 디렉토리 재스캔 강제 - 5초 대기 없이 즉시 새 파일 발견
+    this.lastDirScan = 0;
+
+    // (2) 세션 디렉토리 캐시 리셋 - 새 세션의 subagents 폴더 경로 갱신
+    this.subagentsDir = null;
+
+    // (3) 파일 목록 캐시 클리어 - 이전 세션 파일 참조 제거
+    this.cachedFiles.clear();
+
+    // (4) fileStates는 클리어하지 않음 - 동일 세션 내 다른 에이전트 상태 유지 필요
+    // this.fileStates.clear(); // 이것은 하면 안 됨!
+
+    console.log('[TranscriptWatcher] Forcing directory rescan for new agent (cache cleared)');
+
+    // Get subagents directory (always refresh to get latest session)
     if (!this.subagentsDir) {
       this.subagentsDir = await getSubagentsDir(this.workingDirectory);
       if (!this.subagentsDir) {
@@ -171,13 +259,18 @@ export class TranscriptWatcher {
    * Optimized: only re-scan directory periodically, not on every poll
    */
   private async pollAllFiles(): Promise<void> {
-    if (!this.subagentsDir) return;
+    if (!this.subagentsDir) {
+      console.log('[TranscriptWatcher] pollAllFiles: no subagentsDir');
+      return;
+    }
 
     const now = Date.now();
 
     // Only re-scan directory periodically to find new files
     if (now - this.lastDirScan > this.DIR_SCAN_INTERVAL_MS) {
+      console.log('[TranscriptWatcher] Scanning directory:', this.subagentsDir);
       const files = await getAgentFiles(this.subagentsDir);
+      console.log('[TranscriptWatcher] Found files:', files.map(f => f.file));
       for (const fileInfo of files) {
         this.cachedFiles.add(fileInfo.path);
       }
@@ -186,6 +279,9 @@ export class TranscriptWatcher {
 
     // Process cached files in parallel for better performance
     const filePaths = Array.from(this.cachedFiles);
+    if (filePaths.length > 0) {
+      console.log('[TranscriptWatcher] Processing', filePaths.length, 'cached files');
+    }
     await Promise.all(filePaths.map(path => this.checkFileForNewContent(path)));
   }
 
@@ -203,6 +299,8 @@ export class TranscriptWatcher {
       // Get or create file state
       let fileState = this.fileStates.get(filePath);
       if (!fileState) {
+        const fileName = filePath.split('/').pop();
+        console.log('[TranscriptWatcher] Creating NEW file state for:', fileName, 'fileSize:', fileSize);
         fileState = {
           lastPosition: 0,
           filePath,
@@ -213,9 +311,37 @@ export class TranscriptWatcher {
         this.fileStates.set(filePath, fileState);
       }
 
-      if (fileSize <= fileState.lastPosition) {
-        return; // No new content
+      // 디버깅: 파일 상태 체크 (첫 체크 또는 새 콘텐츠가 있을 때만 로깅)
+      const isFirstCheck = fileState.lastPosition === 0;
+      const hasNewContent = fileSize > fileState.lastPosition;
+
+      if (isFirstCheck || hasNewContent) {
+        const fileName = filePath.split('/').pop();
+        console.log('[TranscriptWatcher] File check:', {
+          file: fileName,
+          fileSize,
+          lastPosition: fileState.lastPosition,
+          isFirstCheck,
+          hasNewContent,
+        });
       }
+
+      if (fileSize <= fileState.lastPosition) {
+        // No new content - 이미 모든 콘텐츠를 읽음 (매 500ms마다 체크하므로 이 로그는 생략)
+        return;
+      }
+
+      // 새 콘텐츠 발견!
+      const fileName = filePath.split('/').pop();
+      console.log('[TranscriptWatcher] ========== NEW CONTENT DETECTED ==========');
+      console.log('[TranscriptWatcher] File:', fileName);
+      console.log('[TranscriptWatcher] Bytes to read:', fileSize - fileState.lastPosition);
+      console.log('[TranscriptWatcher] Active agents:', Array.from(this.activeAgents));
+      console.log('[TranscriptWatcher] ===========================================');
+
+      console.log('[TranscriptWatcher] New content in file:', filePath.split('/').pop(),
+        'bytes:', fileSize - fileState.lastPosition,
+        'activeAgents:', Array.from(this.activeAgents));
 
       // Read only new bytes from the last position
       const bytesToRead = fileSize - fileState.lastPosition;
@@ -234,6 +360,11 @@ export class TranscriptWatcher {
       // Save it for the next read
       fileState.partialLine = lines.pop() || '';
 
+      // Extract agentId from file path (claude-esp pattern 4)
+      // 중요: 파일 경로의 agentId가 JSONL보다 신뢰할 수 있음
+      // 자세한 내용은 utils/agentIdMatcher.ts 참조
+      const fileAgentId = extractAgentIdFromFilePath(filePath);
+
       // Process complete lines
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -241,9 +372,24 @@ export class TranscriptWatcher {
         const messages = parseTranscriptLine(line);
 
         for (const message of messages) {
-          // Use agentId from JSONL content (already extracted by parseTranscriptLine)
-          // Only emit if this agent is being watched
-          if (message.agentId && this.activeAgents.has(message.agentId)) {
+          // 유효한 agentId 결정 (JSONL > 파일경로 우선순위)
+          const effectiveAgentId = resolveEffectiveAgentId(message.agentId, fileAgentId);
+
+          // 매칭되는 SDK agentId 찾기 (중앙 집중화된 매칭 로직 사용)
+          const matchedSdkId = findMatchingAgentId(this.activeAgents, effectiveAgentId);
+
+          // 디버그 로깅
+          logIdMatchingDebug('TranscriptWatcher', {
+            jsonlAgentId: message.agentId,
+            filePathAgentId: fileAgentId,
+            effectiveAgentId,
+            activeAgents: this.activeAgents,
+            matchResult: matchedSdkId,
+          });
+
+          if (matchedSdkId) {
+            // 매칭된 SDK agentId로 메시지 전달 (라우팅 일관성 유지)
+            message.agentId = matchedSdkId;
             this.callbacks.onMessage(message);
           }
         }
