@@ -185,6 +185,56 @@ function registerTeamHandlers(services: IPCServices): void {
     services.streamRouter?.clear();
   });
 
+  // Stop all agents (abort current query and cleanup)
+  ipcMain.on('team:stop-all-agents', (_event, teamId?: string) => {
+    console.log('[IPC] Stopping all agents', teamId ? `for team ${teamId}` : '');
+
+    // Abort current query
+    services.claudeService?.stop();
+
+    // Clear agent context
+    services.streamRouter?.clear();
+
+    // Stop all transcript watchers
+    services.transcriptWatcher?.stopAll();
+
+    // Clear transcript accumulators
+    services.clearTranscriptAccumulator();
+
+    // Update team and mark sub-agents as stopped, then remove after delay
+    if (teamId && services.teamManager) {
+      const team = services.teamManager.getTeam(teamId);
+      if (team) {
+        // Update leader agent status to idle
+        services.teamManager.updateAgentStatus(teamId, team.leaderId, 'idle');
+
+        // Collect sub-agent IDs and mark them as stopped
+        const subAgentIds: string[] = [];
+        for (const agent of team.agents.values()) {
+          if (!agent.isLeader) {
+            subAgentIds.push(agent.id);
+            services.teamManager.updateAgentStatus(teamId, agent.id, 'stopped');
+          }
+        }
+
+        // Update team status
+        services.teamManager.updateTeamStatus(teamId, 'idle');
+
+        // Remove sub-agents after 1 second (so user can see 'Stopped' status)
+        if (subAgentIds.length > 0) {
+          setTimeout(() => {
+            for (const agentId of subAgentIds) {
+              services.teamManager?.removeAgent(teamId, agentId);
+            }
+          }, 1000);
+        }
+      }
+    }
+
+    // Notify renderer (legacy support)
+    services.sendToRenderer('agent:status', { status: 'idle' as AgentStatus });
+  });
+
   // Get active team count
   ipcMain.handle('team:get-count', () => {
     return services.teamManager?.getTeamCount() || 0;

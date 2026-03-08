@@ -57,6 +57,7 @@ export { AgentStartEvent, AgentStopEvent };
 
 export class ClaudeAgentService extends EventEmitter {
   private abortController: AbortController | null = null;
+  private currentQuery: AsyncGenerator<unknown, void, unknown> | null = null;
   private isRunning: boolean = false;
   private currentWorkingDirectory: string = process.cwd();
 
@@ -233,6 +234,9 @@ export class ClaudeAgentService extends EventEmitter {
         options: queryOpts as any
       });
 
+      // Store query iterator for proper cleanup on stop
+      this.currentQuery = queryIterator;
+
       console.log('[ClaudeAgentService] Query iterator created, starting message loop...');
       let messageCount = 0;
 
@@ -259,6 +263,7 @@ export class ClaudeAgentService extends EventEmitter {
     } finally {
       this.isRunning = false;
       this.abortController = null;
+      this.currentQuery = null;
     }
   }
 
@@ -312,6 +317,18 @@ export class ClaudeAgentService extends EventEmitter {
    * Stop the current query
    */
   stop(): void {
+    // Close query iterator first for proper resource cleanup
+    if (this.currentQuery) {
+      try {
+        // Call return() to properly close the async generator
+        this.currentQuery.return(undefined);
+      } catch (e) {
+        console.log('[ClaudeAgentService] Error closing query:', e);
+      }
+      this.currentQuery = null;
+    }
+
+    // Then abort the controller
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;

@@ -55,7 +55,7 @@ export interface AgentMessage {
 }
 
 // Agent status
-export type AgentStatus = 'idle' | 'thinking' | 'responding' | 'using_tool' | 'complete' | 'error';
+export type AgentStatus = 'idle' | 'thinking' | 'responding' | 'using_tool' | 'complete' | 'error' | 'stopped';
 
 // Agent state for UI
 export interface AgentState {

@@ -191,6 +191,11 @@ contextBridge.exposeInMainWorld('teamAPI', {
     ipcRenderer.send('team:close-all');
   },
 
+  // Stop all agents (abort current query and cleanup)
+  stopAllAgents: (teamId?: string) => {
+    ipcRenderer.send('team:stop-all-agents', teamId);
+  },
+
   // Get team count
   getTeamCount: (): Promise<number> => {
     return ipcRenderer.invoke('team:get-count');
@@ -314,6 +319,7 @@ declare global {
       deleteTeam: (teamId: string) => Promise<boolean>;
       sendCommand: (teamId: string, command: string) => void;
       closeAllTeams: () => void;
+      stopAllAgents: (teamId?: string) => void;
       getTeamCount: () => Promise<number>;
       selectDirectory: () => Promise<string | null>;
       // Event Listeners

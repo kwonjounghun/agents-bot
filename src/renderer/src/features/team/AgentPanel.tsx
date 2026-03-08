@@ -29,6 +29,7 @@ export function AgentPanel({ agent }: AgentPanelProps) {
       case 'using_tool': return 'border-blue-500/50 shadow-blue-500/20';
       case 'complete': return 'border-emerald-500/50';
       case 'error': return 'border-red-500/50';
+      case 'stopped': return 'border-orange-500/50 shadow-orange-500/20';
       default: return 'border-slate-600/50';
     }
   };
@@ -40,6 +41,7 @@ export function AgentPanel({ agent }: AgentPanelProps) {
       case 'using_tool': return 'Using tool...';
       case 'complete': return 'Complete';
       case 'error': return 'Error';
+      case 'stopped': return 'Stopped';
       default: return 'Idle';
     }
   };

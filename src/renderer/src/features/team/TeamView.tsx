@@ -37,11 +37,12 @@ export function TeamView() {
               {activeTeam.workingDirectory}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <StatusBadge status={activeTeam.status} />
             <span className="text-slate-400 text-sm">
               {activeTeam.agents.length} agent{activeTeam.agents.length !== 1 ? 's' : ''}
             </span>
+            <StopButton teamId={activeTeam.id} agents={activeTeam.agents} />
           </div>
         </div>
       </div>
@@ -75,5 +76,46 @@ function StatusBadge({ status }: { status: string }) {
     <span className={`px-2 py-1 rounded-full border text-xs ${getStatusStyle()}`}>
       {status}
     </span>
+  );
+}
+
+interface Agent {
+  id: string;
+  status: string;
+}
+
+function StopButton({ teamId, agents }: { teamId: string; agents: Agent[] }) {
+  // Show stop button if any agent is processing
+  const isAnyAgentProcessing = agents.some(
+    (agent) =>
+      agent.status === 'thinking' ||
+      agent.status === 'responding' ||
+      agent.status === 'using_tool'
+  );
+
+  if (!isAnyAgentProcessing) {
+    return null;
+  }
+
+  const handleStop = () => {
+    window.teamAPI.stopAllAgents(teamId);
+  };
+
+  return (
+    <button
+      onClick={handleStop}
+      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-md transition-colors"
+      title="Stop all agents"
+    >
+      <svg
+        className="w-4 h-4"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <rect x="6" y="6" width="12" height="12" rx="1" strokeWidth="2" />
+      </svg>
+      Stop
+    </button>
   );
 }
