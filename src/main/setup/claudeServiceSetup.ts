@@ -28,6 +28,8 @@ export interface ClaudeServiceDependencies {
   getMessageIds: () => { textId: string | null; thinkingId: string | null };
   setMessageIds: (textId: string | null, thinkingId: string | null) => void;
   clearTranscriptAccumulator: (agentId: string) => void;
+  /** Whether to route leader messages to TeamManager (default: false for backward compatibility) */
+  routeLeaderToTeam?: boolean;
 }
 
 /**
@@ -125,12 +127,28 @@ function setupAgentLifecycleHandlers(
 }
 
 /**
+ * Leader message accumulator state for grouping messages by type
+ */
+interface LeaderMessageState {
+  currentType: 'text' | 'thinking' | null;
+  currentMessageId: string | null;
+  accumulatedContent: string;
+}
+
+/**
  * Setup message event handlers with routing logic
  */
 function setupMessageHandlers(
   claudeService: ClaudeAgentService,
   deps: ClaudeServiceDependencies
 ): void {
+  // Leader message state for accumulation (closure)
+  const leaderState: LeaderMessageState = {
+    currentType: null,
+    currentMessageId: null,
+    accumulatedContent: '',
+  };
+
   claudeService.on('message', (message: ClaudeAgentMessage) => {
     console.log(
       '[ClaudeServiceSetup] Message:',
@@ -143,19 +161,19 @@ function setupMessageHandlers(
 
     switch (message.type) {
       case 'text':
-        handleTextMessage(message, deps);
+        handleTextMessage(message, deps, leaderState);
         break;
       case 'thinking':
-        handleThinkingMessage(message, deps);
+        handleThinkingMessage(message, deps, leaderState);
         break;
       case 'tool_use':
-        handleToolUseMessage(message, deps);
+        handleToolUseMessage(message, deps, leaderState);
         break;
       case 'result':
-        handleResultMessage(message, deps);
+        handleResultMessage(message, deps, leaderState);
         break;
       case 'error':
-        handleErrorMessage(message, deps);
+        handleErrorMessage(message, deps, leaderState);
         break;
     }
   });
@@ -164,7 +182,11 @@ function setupMessageHandlers(
 /**
  * Handle text messages
  */
-function handleTextMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDependencies): void {
+function handleTextMessage(
+  message: ClaudeAgentMessage,
+  deps: ClaudeServiceDependencies,
+  leaderState: LeaderMessageState
+): void {
   const { textId } = deps.getMessageIds();
   const newTextId = textId || `text-${Date.now()}`;
   deps.setMessageIds(newTextId, deps.getMessageIds().thinkingId);
@@ -178,12 +200,55 @@ function handleTextMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDepen
     isComplete: false,
   });
 
+  // Route leader messages (no parentToolUseId) to TeamManager with accumulation
+  if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
+    const activeTeam = deps.teamManager.getActiveTeam();
+    if (activeTeam) {
+      // Skip if content equals accumulated (this is the final complete message)
+      if (leaderState.accumulatedContent === message.content) {
+        console.log('[ClaudeServiceSetup] Skipping duplicate final message');
+        return;
+      }
+
+      // Check if type changed -> new message bubble
+      if (leaderState.currentType !== 'text') {
+        // Type changed, create new message
+        const msgId = `leader-text-${Date.now()}`;
+        leaderState.currentType = 'text';
+        leaderState.currentMessageId = msgId;
+        leaderState.accumulatedContent = message.content;
+
+        deps.teamManager.addAgentMessage(activeTeam.id, activeTeam.leaderId, {
+          id: msgId,
+          type: 'text',
+          content: message.content,
+          timestamp: Date.now(),
+          isStreaming: true,
+        });
+      } else {
+        // Same type, accumulate content
+        leaderState.accumulatedContent += message.content;
+
+        if (leaderState.currentMessageId) {
+          deps.teamManager.updateLastAgentMessage(
+            activeTeam.id,
+            activeTeam.leaderId,
+            leaderState.accumulatedContent
+          );
+        }
+      }
+    }
+  }
 }
 
 /**
  * Handle thinking messages
  */
-function handleThinkingMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDependencies): void {
+function handleThinkingMessage(
+  message: ClaudeAgentMessage,
+  deps: ClaudeServiceDependencies,
+  leaderState: LeaderMessageState
+): void {
   const { thinkingId } = deps.getMessageIds();
   const newThinkingId = thinkingId || `thinking-${Date.now()}`;
   deps.setMessageIds(deps.getMessageIds().textId, newThinkingId);
@@ -197,29 +262,85 @@ function handleThinkingMessage(message: ClaudeAgentMessage, deps: ClaudeServiceD
     isComplete: false,
   });
 
+  // Route leader messages (no parentToolUseId) to TeamManager with accumulation
+  if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
+    const activeTeam = deps.teamManager.getActiveTeam();
+    if (activeTeam) {
+      // Skip if content equals accumulated (this is the final complete message)
+      if (leaderState.accumulatedContent === message.content) {
+        console.log('[ClaudeServiceSetup] Skipping duplicate final thinking message');
+        return;
+      }
+
+      // Check if type changed -> new message bubble
+      if (leaderState.currentType !== 'thinking') {
+        // Type changed, create new message
+        const msgId = `leader-thinking-${Date.now()}`;
+        leaderState.currentType = 'thinking';
+        leaderState.currentMessageId = msgId;
+        leaderState.accumulatedContent = message.content;
+
+        deps.teamManager.addAgentMessage(activeTeam.id, activeTeam.leaderId, {
+          id: msgId,
+          type: 'thinking',
+          content: message.content,
+          timestamp: Date.now(),
+          isStreaming: true,
+        });
+      } else {
+        // Same type, accumulate content
+        leaderState.accumulatedContent += message.content;
+
+        if (leaderState.currentMessageId) {
+          deps.teamManager.updateLastAgentMessage(
+            activeTeam.id,
+            activeTeam.leaderId,
+            leaderState.accumulatedContent
+          );
+        }
+      }
+    }
+  }
 }
 
 /**
  * Handle tool use messages
  */
-function handleToolUseMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDependencies): void {
+function handleToolUseMessage(
+  message: ClaudeAgentMessage,
+  deps: ClaudeServiceDependencies,
+  leaderState: LeaderMessageState
+): void {
   // Reset message IDs
   deps.setMessageIds(null, null);
+
+  // Reset leader state (tool use interrupts text/thinking flow)
+  leaderState.currentType = null;
+  leaderState.currentMessageId = null;
+  leaderState.accumulatedContent = '';
 
   deps.sendToRenderer('agent:status', { status: 'using_tool' as AgentStatus });
   deps.sendToRenderer('agent:tool-use', {
     toolName: message.toolName || 'Unknown',
     input: message.toolInput || '',
   });
-
 }
 
 /**
  * Handle result messages
  */
-function handleResultMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDependencies): void {
+function handleResultMessage(
+  message: ClaudeAgentMessage,
+  deps: ClaudeServiceDependencies,
+  leaderState: LeaderMessageState
+): void {
   // Reset message IDs
   deps.setMessageIds(null, null);
+
+  // Reset leader state
+  leaderState.currentType = null;
+  leaderState.currentMessageId = null;
+  leaderState.accumulatedContent = '';
 
   deps.sendToRenderer('agent:status', { status: 'complete' as AgentStatus });
   deps.sendToRenderer('agent:result', {
@@ -227,18 +348,25 @@ function handleResultMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDep
     costUsd: message.costUsd || 0,
     turns: message.turns || 0,
   });
-
 }
 
 /**
  * Handle error messages
  */
-function handleErrorMessage(message: ClaudeAgentMessage, deps: ClaudeServiceDependencies): void {
+function handleErrorMessage(
+  message: ClaudeAgentMessage,
+  deps: ClaudeServiceDependencies,
+  leaderState: LeaderMessageState
+): void {
   // Reset message IDs
   deps.setMessageIds(null, null);
 
+  // Reset leader state
+  leaderState.currentType = null;
+  leaderState.currentMessageId = null;
+  leaderState.accumulatedContent = '';
+
   deps.sendToRenderer('agent:status', { status: 'error' as AgentStatus });
   deps.sendToRenderer('agent:error', { error: message.content });
-
 }
 

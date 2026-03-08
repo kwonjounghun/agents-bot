@@ -153,6 +153,8 @@ app.whenReady().then(async () => {
     clearTranscriptAccumulator: (agentId) => {
       transcriptHandler?.clearAccumulator(agentId);
     },
+    // Enable routing leader messages (thinking/text) to TeamManager for display in leader chat
+    routeLeaderToTeam: true,
   });
 
   // Forward agent events to team manager for sub-agent tracking
