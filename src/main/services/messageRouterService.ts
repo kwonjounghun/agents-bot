@@ -10,6 +10,7 @@ import type { StreamRouter } from './streamRouter';
 import type { WidgetManager } from '../widgetManager';
 import type { LeaderAgentManager } from '../leaderAgentManager';
 import type { AgentStatus } from '../../shared/types';
+import { formatToolInputCompact } from '../../shared/formatters/toolInputFormatter';
 
 export interface MessageRouterConfig {
   streamRouter: StreamRouter;
@@ -291,32 +292,7 @@ export class MessageRouterService {
    * Format tool message for display
    */
   private formatToolMessage(message: ClaudeAgentMessage): string {
-    const toolName = message.toolName || 'tool';
-    let toolDetail = '';
-
-    if (message.toolInput) {
-      try {
-        const input = JSON.parse(message.toolInput);
-        if (toolName === 'Read' && input.file_path) {
-          toolDetail = ` ${input.file_path.split('/').pop()}`;
-        } else if (toolName === 'Glob' && input.pattern) {
-          toolDetail = ` ${input.pattern}`;
-        } else if (toolName === 'Grep' && input.pattern) {
-          toolDetail = ` "${input.pattern.substring(0, 20)}"`;
-        } else if (toolName === 'Edit' && input.file_path) {
-          toolDetail = ` ${input.file_path.split('/').pop()}`;
-        } else if (toolName === 'Write' && input.file_path) {
-          toolDetail = ` ${input.file_path.split('/').pop()}`;
-        } else if (toolName === 'Bash' && input.command) {
-          const cmd = input.command.split(' ')[0];
-          toolDetail = ` ${cmd}`;
-        }
-      } catch {
-        // Ignore JSON parse errors
-      }
-    }
-
-    return `${toolName}${toolDetail}`;
+    return formatToolInputCompact(message.toolName || 'tool', message.toolInput);
   }
 }
 

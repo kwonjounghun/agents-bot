@@ -27,18 +27,15 @@ import {
   failMode
 } from '../state';
 import { detectKeywordsWithType } from '../hooks';
+import { ModePromptBuilder, createModePromptBuilder, type QueryResult } from './prompts/modePromptBuilder';
 
 /**
  * Query function type - injected from ClaudeAgentService
  */
 export type QueryFunction = (prompt: string) => Promise<QueryResult>;
 
-export interface QueryResult {
-  success: boolean;
-  response: string;
-  toolsUsed: string[];
-  error?: string;
-}
+// Re-export QueryResult from modePromptBuilder
+export type { QueryResult } from './prompts/modePromptBuilder';
 
 /**
  * Completion checker function type
@@ -82,6 +79,7 @@ export class PersistentModeExecutor extends EventEmitter {
   private config: PersistentModeConfig;
   private queryFn: QueryFunction;
   private completionChecker: CompletionChecker;
+  private promptBuilder: ModePromptBuilder;
   private isRunning: boolean = false;
   private shouldStop: boolean = false;
 
@@ -96,6 +94,7 @@ export class PersistentModeExecutor extends EventEmitter {
     this.queryFn = queryFn;
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.completionChecker = completionChecker || this.defaultCompletionChecker.bind(this);
+    this.promptBuilder = createModePromptBuilder(this.config.continuePrompt);
   }
 
   /**
@@ -291,55 +290,14 @@ export class PersistentModeExecutor extends EventEmitter {
    * Build initial prompt for the mode
    */
   private buildInitialPrompt(mode: SkillMode, task: string): string {
-    const modeInstructions: Record<SkillMode, string> = {
-      ralph: `You are in RALPH mode - a persistent execution loop that continues until the task is complete.
-
-TASK: ${task}
-
-INSTRUCTIONS:
-1. Work on this task systematically
-2. Use all necessary tools (Read, Write, Edit, Bash, etc.)
-3. Do NOT stop until the task is fully complete
-4. After each major step, assess if the task is complete
-5. If complete, clearly state "TASK COMPLETE" and summarize what was done
-
-Begin working on the task now.`,
-
-      autopilot: `You are in AUTOPILOT mode - full autonomous execution from planning to completion.
-
-GOAL: ${task}
-
-PHASES:
-1. PLANNING - Analyze requirements and create a plan
-2. IMPLEMENTING - Execute the plan step by step
-3. TESTING - Verify the implementation works
-4. VERIFICATION - Final checks and cleanup
-
-Work through each phase systematically. Do NOT stop until all phases are complete.
-
-Begin with the PLANNING phase.`,
-
-      team: task,
-      ultrawork: task,
-      ultrapilot: task,
-      pipeline: task,
-      plan: task
-    };
-
-    return modeInstructions[mode] || task;
+    return this.promptBuilder.buildInitialPrompt(mode, task);
   }
 
   /**
    * Build continuation prompt
    */
   private buildContinuePrompt(mode: SkillMode, lastResult: QueryResult | null): string {
-    let prompt = this.config.continuePrompt;
-
-    if (lastResult?.error) {
-      prompt += `\n\nThe previous iteration encountered an issue: ${lastResult.error}\nPlease address this and continue.`;
-    }
-
-    return prompt;
+    return this.promptBuilder.buildContinuePrompt(mode, lastResult, this.config.continuePrompt);
   }
 
   /**

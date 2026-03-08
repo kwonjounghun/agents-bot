@@ -13,6 +13,8 @@
 
 import type { WidgetManager } from '../widgetManager';
 import type { AgentRole, WidgetMessage, AgentStatus } from '../../shared/types';
+import { AgentIdMapper, createAgentIdMapper } from './routing/agentIdMapper';
+import { SectionTracker, createSectionTracker, type WidgetMessageType } from './routing/sectionTracker';
 
 // Agent type normalization (from oh-my-claudecode:xxx to xxx)
 const AGENT_TYPE_PREFIX = 'oh-my-claudecode:';
@@ -28,17 +30,10 @@ export interface AgentContext {
   isTeamMember: boolean;
   /** Tool use ID that spawned this agent (for message routing) */
   toolUseId?: string;
-  /** Current section tracking for accumulated messages */
-  currentSection?: {
-    id: string;
-    type: WidgetMessageType;
-  };
 }
 
-/**
- * Message types that can be routed to widgets
- */
-export type WidgetMessageType = 'thinking' | 'speaking' | 'tool_use' | 'complete';
+// Re-export WidgetMessageType from sectionTracker
+export type { WidgetMessageType } from './routing/sectionTracker';
 
 /**
  * Configuration for StreamRouter
@@ -99,8 +94,10 @@ export class StreamRouter {
   private widgetManager: WidgetManager | null = null;
   private config: StreamRouterConfig;
   private autoCloseTimers: Map<string, NodeJS.Timeout> = new Map();
-  /** Map of toolUseId -> agentId for routing subagent messages */
-  private toolUseIdToAgentId: Map<string, string> = new Map();
+  /** Agent ID mapper for routing subagent messages */
+  private idMapper: AgentIdMapper = createAgentIdMapper();
+  /** Section tracker for message grouping */
+  private sectionTracker: SectionTracker = createSectionTracker();
 
   constructor(config: Partial<StreamRouterConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -116,12 +113,19 @@ export class StreamRouter {
   /**
    * Push a new agent context onto the stack (called on SubagentStart)
    * Creates a widget for the agent if WidgetManager is available
+   *
+   * @param agentId - SDK's agent_id
+   * @param agentType - Agent type string
+   * @param isTeamMember - Whether this is a team member agent
+   * @param toolUseId - Parent tool_use_id for routing
+   * @param transcriptAgentId - Short agentId from JSONL (e.g., "ab215e8")
    */
   async pushContext(
     agentId: string,
     agentType: string,
     isTeamMember: boolean = false,
-    toolUseId?: string
+    toolUseId?: string,
+    transcriptAgentId?: string
   ): Promise<AgentContext> {
     // Prevent stack overflow
     if (this.contextStack.length >= this.config.maxContextDepth) {
@@ -152,10 +156,12 @@ export class StreamRouter {
 
     this.contextStack.push(context);
 
-    // Store toolUseId -> agentId mapping for message routing
+    // Store ID mappings for message routing
     if (toolUseId) {
-      this.toolUseIdToAgentId.set(toolUseId, agentId);
-      console.log(`[StreamRouter] Mapped toolUseId ${toolUseId} -> agentId ${agentId}`);
+      this.idMapper.setToolUseMapping(toolUseId, agentId);
+    }
+    if (transcriptAgentId) {
+      this.idMapper.setTranscriptMapping(transcriptAgentId, agentId);
     }
 
     // Create widget for this agent
@@ -191,12 +197,11 @@ export class StreamRouter {
 
     // Clean up toolUseId mapping
     if (context.toolUseId) {
-      this.toolUseIdToAgentId.delete(context.toolUseId);
-      console.log(`[StreamRouter] Removed toolUseId mapping: ${context.toolUseId}`);
+      this.idMapper.removeToolUseMapping(context.toolUseId);
     }
 
-    // Reset current section
-    context.currentSection = undefined;
+    // Reset section tracking for this agent
+    this.sectionTracker.resetSection(agentId);
 
     // Mark widget as complete
     if (this.widgetManager) {
@@ -257,11 +262,39 @@ export class StreamRouter {
    * Get agent context by toolUseId (parent_tool_use_id from SDK messages)
    */
   getAgentByToolUseId(toolUseId: string): AgentContext | undefined {
-    const agentId = this.toolUseIdToAgentId.get(toolUseId);
+    const agentId = this.idMapper.getAgentIdByToolUseId(toolUseId);
     if (!agentId) {
       return undefined;
     }
     return this.getAgentContext(agentId);
+  }
+
+  /**
+   * Get agent context by transcriptAgentId (agentId from JSONL transcript)
+   * This is used for ESP-style transcript routing where JSONL contains short agentId
+   */
+  getAgentByTranscriptId(transcriptAgentId: string): AgentContext | undefined {
+    // First try direct match (SDK agentId might be same as transcript agentId)
+    let context = this.getAgentContext(transcriptAgentId);
+    if (context) {
+      return context;
+    }
+
+    // Try mapping from transcriptAgentId to SDK agentId
+    const sdkAgentId = this.idMapper.getAgentIdByTranscriptId(transcriptAgentId);
+    if (sdkAgentId) {
+      return this.getAgentContext(sdkAgentId);
+    }
+
+    // Fallback: try partial match (first 7 chars)
+    const shortId = transcriptAgentId.substring(0, 7);
+    context = this.contextStack.find((c) =>
+      c.agentId.startsWith(shortId) || c.agentId.includes(shortId)
+    );
+    if (context) {
+      console.log(`[StreamRouter] Partial match: transcriptAgentId ${transcriptAgentId} -> ${context.agentId}`);
+    }
+    return context;
   }
 
   /**
@@ -293,15 +326,8 @@ export class StreamRouter {
     this.cancelAutoClose(agent.agentId);
 
     // Track section changes for accumulated messages
-    let isNewSection = false;
-    let sectionId = agent.currentSection?.id;
-
-    if (!agent.currentSection || agent.currentSection.type !== type) {
-      // New section started
-      isNewSection = true;
-      sectionId = this.generateSectionId();
-      agent.currentSection = { id: sectionId, type };
-    }
+    const sectionResult = this.sectionTracker.trackSection(agent.agentId, type);
+    const { sectionId, isNewSection } = sectionResult;
 
     const message: WidgetMessage = {
       agentId: agent.agentId,
@@ -314,13 +340,6 @@ export class StreamRouter {
     };
 
     this.widgetManager.sendMessageToWidget(message);
-  }
-
-  /**
-   * Generate a unique section ID
-   */
-  private generateSectionId(): string {
-    return `section-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
   /**
@@ -365,14 +384,9 @@ export class StreamRouter {
     this.cancelAutoClose(agent.agentId);
 
     // Track section changes for accumulated messages
-    let isNewSection = false;
-    let sectionId = agent.currentSection?.id;
-
-    if (!agent.currentSection || agent.currentSection.type !== type) {
-      // New section started
-      isNewSection = true;
-      sectionId = this.generateSectionId();
-      agent.currentSection = { id: sectionId, type };
+    const sectionResult = this.sectionTracker.trackSection(agent.agentId, type);
+    const { sectionId, isNewSection } = sectionResult;
+    if (isNewSection) {
       console.log(`[StreamRouter] New section started: ${sectionId} (type: ${type})`);
     }
 
@@ -526,8 +540,9 @@ export class StreamRouter {
     }
 
     this.contextStack = [];
-    this.toolUseIdToAgentId.clear();
-    console.log('[StreamRouter] Cleared all agent contexts and toolUseId mappings');
+    this.idMapper.clear();
+    this.sectionTracker.clear();
+    console.log('[StreamRouter] Cleared all agent contexts, ID mappings, and sections');
   }
 
   /**

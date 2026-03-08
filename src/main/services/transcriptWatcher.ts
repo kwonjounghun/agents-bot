@@ -7,23 +7,17 @@
  * Transcript location pattern:
  * ~/.claude/projects/{project-slug}/{session-id}/subagents/agent-a{hash}.jsonl
  *
- * Strategy: Watch the subagents directory and assign new files to agents
- * in the order they start.
+ * Strategy: Watch all subagent files and route messages based on the agentId
+ * field embedded in each JSONL line (claude-esp style).
  */
 
 import { readFile, stat, readdir } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
+import { parseTranscriptLine, type TranscriptMessage } from './parsers/transcriptLineParser';
+import { getSubagentsDir } from './utils/claudeProjectPaths';
 
-export interface TranscriptMessage {
-  type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
-  content: string;
-  agentId: string;
-  /** Tool name for tool_use/tool_result messages */
-  toolName?: string;
-  /** Tool use ID for correlation */
-  toolUseId?: string;
-}
+// Re-export TranscriptMessage for consumers
+export type { TranscriptMessage } from './parsers/transcriptLineParser';
 
 export interface TranscriptWatcherCallbacks {
   onMessage: (message: TranscriptMessage) => void;
@@ -35,74 +29,6 @@ interface WatcherState {
   filePath: string;
   agentId: string;
   isActive: boolean;
-}
-
-/**
- * Get the Claude projects directory
- */
-function getClaudeProjectsDir(): string {
-  return join(homedir(), '.claude', 'projects');
-}
-
-/**
- * Convert a working directory path to a Claude project slug
- * Claude replaces ALL non-alphanumeric characters with hyphens
- * e.g., /Users/foo/Documents/02_side-projects/scope -> -Users-foo-Documents-02-side-projects-scope
- */
-function getProjectSlug(workingDirectory: string): string {
-  // Replace all non-alphanumeric characters with hyphens (same as Claude)
-  return workingDirectory.replace(/[^a-zA-Z0-9]/g, '-');
-}
-
-/**
- * Find the most recent session directory for a project
- */
-async function findLatestSessionDir(projectDir: string): Promise<string | null> {
-  try {
-    const entries = await readdir(projectDir, { withFileTypes: true });
-
-    // Filter for UUID-like directories (session IDs)
-    const sessionDirs = entries.filter(e =>
-      e.isDirectory() &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(e.name)
-    );
-
-    if (sessionDirs.length === 0) {
-      return null;
-    }
-
-    // Get stats for each directory and sort by modification time
-    const dirStats = await Promise.all(
-      sessionDirs.map(async (dir) => {
-        const dirPath = join(projectDir, dir.name);
-        const stats = await stat(dirPath);
-        return { name: dir.name, mtime: stats.mtime };
-      })
-    );
-
-    dirStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-
-    return dirStats[0]?.name || null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Get the subagents directory for the current session
- */
-async function getSubagentsDir(workingDirectory: string): Promise<string | null> {
-  const projectsDir = getClaudeProjectsDir();
-  const projectSlug = getProjectSlug(workingDirectory);
-  const projectDir = join(projectsDir, projectSlug);
-
-  const sessionId = await findLatestSessionDir(projectDir);
-  if (!sessionId) {
-    console.log('[TranscriptWatcher] No session directory found for project:', projectSlug);
-    return null;
-  }
-
-  return join(projectDir, sessionId, 'subagents');
 }
 
 /**
@@ -135,147 +61,26 @@ async function getAgentFiles(subagentsDir: string): Promise<{ file: string; path
   }
 }
 
-/**
- * Format tool input for display (ESP-style)
- */
-function formatToolInput(toolName: string, input: unknown): string {
-  if (!input || typeof input !== 'object') {
-    return String(input || '');
-  }
 
-  const inputObj = input as Record<string, unknown>;
-
-  // Tool-specific formatting
-  switch (toolName) {
-    case 'Read':
-      return inputObj.file_path as string || '';
-    case 'Write':
-      return `${inputObj.file_path || ''} (${String(inputObj.content || '').length} chars)`;
-    case 'Edit':
-      return inputObj.file_path as string || '';
-    case 'Bash':
-      return inputObj.command as string || '';
-    case 'Glob':
-      return `${inputObj.pattern || ''} in ${inputObj.path || '.'}`;
-    case 'Grep':
-      return `"${inputObj.pattern || ''}" in ${inputObj.path || '.'}`;
-    case 'Task':
-      return `${inputObj.subagent_type || 'agent'}: ${String(inputObj.prompt || '').substring(0, 100)}...`;
-    case 'WebFetch':
-      return inputObj.url as string || '';
-    case 'WebSearch':
-      return inputObj.query as string || '';
-    default:
-      // Generic: show first few key-value pairs
-      const entries = Object.entries(inputObj).slice(0, 3);
-      return entries.map(([k, v]) => `${k}=${String(v).substring(0, 50)}`).join(', ');
-  }
-}
 
 /**
- * Parse a single JSONL line from the transcript (ESP-style)
- * Returns multiple messages if the line contains multiple content blocks
- */
-function parseTranscriptLine(line: string): TranscriptMessage[] {
-  if (!line.trim()) {
-    return [];
-  }
-
-  try {
-    const entry = JSON.parse(line);
-    const messages: TranscriptMessage[] = [];
-
-    // Process assistant messages (thinking, text, tool_use)
-    if (entry.type === 'assistant' && entry.message?.content) {
-      const content = entry.message.content;
-      if (!Array.isArray(content)) {
-        return [];
-      }
-
-      for (const block of content) {
-        if (block.type === 'text' && block.text) {
-          messages.push({
-            type: 'text',
-            content: block.text,
-            agentId: ''
-          });
-        }
-        if (block.type === 'thinking' && block.thinking) {
-          messages.push({
-            type: 'thinking',
-            content: block.thinking,
-            agentId: ''
-          });
-        }
-        if (block.type === 'tool_use' && block.name) {
-          const formattedInput = formatToolInput(block.name, block.input);
-          messages.push({
-            type: 'tool_use',
-            content: formattedInput,
-            agentId: '',
-            toolName: block.name,
-            toolUseId: block.id
-          });
-        }
-      }
-    }
-
-    // Process user messages (tool_result)
-    if (entry.type === 'user' && entry.message?.content) {
-      const content = entry.message.content;
-      if (!Array.isArray(content)) {
-        return [];
-      }
-
-      for (const block of content) {
-        if (block.type === 'tool_result' && block.tool_use_id) {
-          let resultContent = '';
-          if (typeof block.content === 'string') {
-            resultContent = block.content;
-          } else if (Array.isArray(block.content)) {
-            for (const contentBlock of block.content) {
-              if (contentBlock.type === 'text' && contentBlock.text) {
-                resultContent += contentBlock.text;
-              }
-            }
-          }
-
-          if (resultContent.length > 500) {
-            resultContent = resultContent.substring(0, 500) + '... (truncated)';
-          }
-
-          messages.push({
-            type: 'tool_result',
-            content: resultContent,
-            agentId: '',
-            toolUseId: block.tool_use_id
-          });
-        }
-      }
-    }
-
-    return messages;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * TranscriptWatcher class manages watching multiple subagent transcripts
+ * TranscriptWatcher class manages watching all subagent transcripts
+ *
+ * Strategy: Watch all files in the subagents directory and route messages
+ * based on the agentId embedded in each JSONL line (claude-esp style).
+ * No need to guess file-to-agent mapping.
  */
 export class TranscriptWatcher {
-  private watchers: Map<string, WatcherState> = new Map();
+  private fileStates: Map<string, WatcherState> = new Map();
   private callbacks: TranscriptWatcherCallbacks;
   private workingDirectory: string;
   private pollInterval: NodeJS.Timeout | null = null;
   private readonly POLL_INTERVAL_MS = 500;
 
-  // Track which files are already assigned to agents
-  private assignedFiles: Set<string> = new Set();
-  // Queue of agents waiting for file assignment
-  private pendingAgents: string[] = [];
   // Cached subagents directory
   private subagentsDir: string | null = null;
+  // Track active (not stopped) agents
+  private activeAgents: Set<string> = new Set();
 
   constructor(callbacks: TranscriptWatcherCallbacks, workingDirectory: string) {
     this.callbacks = callbacks;
@@ -283,15 +88,14 @@ export class TranscriptWatcher {
   }
 
   /**
-   * Start watching a subagent's transcript
+   * Start watching for a specific agent's transcript
+   * The agent's messages will be identified by agentId in the JSONL content
    */
   async startWatching(agentId: string): Promise<boolean> {
-    if (this.watchers.has(agentId)) {
-      console.log('[TranscriptWatcher] Already watching:', agentId);
-      return true;
-    }
+    console.log('[TranscriptWatcher] Start watching for agentId:', agentId);
 
-    console.log('[TranscriptWatcher] Start watching requested for:', agentId);
+    // Mark this agent as active
+    this.activeAgents.add(agentId);
 
     // Get subagents directory if not cached
     if (!this.subagentsDir) {
@@ -303,76 +107,24 @@ export class TranscriptWatcher {
       console.log('[TranscriptWatcher] Subagents directory:', this.subagentsDir);
     }
 
-    // Try to find an unassigned file for this agent
-    const assigned = await this.tryAssignFile(agentId);
-    if (!assigned) {
-      // No file yet, add to pending queue
-      this.pendingAgents.push(agentId);
-      console.log('[TranscriptWatcher] Agent added to pending queue:', agentId);
-    }
-
-    // Start polling (also checks for new files)
+    // Start polling all files
     this.startPolling();
 
     return true;
   }
 
   /**
-   * Try to assign an unassigned file to an agent
-   */
-  private async tryAssignFile(agentId: string): Promise<boolean> {
-    if (!this.subagentsDir) return false;
-
-    const files = await getAgentFiles(this.subagentsDir);
-
-    // Find first file that isn't already assigned
-    for (const fileInfo of files) {
-      if (!this.assignedFiles.has(fileInfo.path)) {
-        // Assign this file to the agent
-        this.assignedFiles.add(fileInfo.path);
-
-        const state: WatcherState = {
-          lastPosition: 0,
-          filePath: fileInfo.path,
-          agentId,
-          isActive: true
-        };
-
-        this.watchers.set(agentId, state);
-        console.log('[TranscriptWatcher] Assigned file to agent:', agentId, '->', fileInfo.file);
-
-        // Do initial read
-        await this.checkForNewContent(state);
-
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Stop watching a subagent's transcript
+   * Stop watching a specific agent
    */
   stopWatching(agentId: string): void {
-    const state = this.watchers.get(agentId);
-    if (state) {
-      state.isActive = false;
-      this.assignedFiles.delete(state.filePath);
-      this.watchers.delete(agentId);
-      console.log('[TranscriptWatcher] Stopped watching:', agentId);
-    }
+    this.activeAgents.delete(agentId);
+    console.log('[TranscriptWatcher] Stopped watching agentId:', agentId);
 
-    // Remove from pending queue if present
-    const pendingIdx = this.pendingAgents.indexOf(agentId);
-    if (pendingIdx >= 0) {
-      this.pendingAgents.splice(pendingIdx, 1);
-    }
-
-    // Stop polling if no more watchers and no pending
-    if (this.watchers.size === 0 && this.pendingAgents.length === 0 && this.pollInterval) {
+    // Stop polling if no more active agents
+    if (this.activeAgents.size === 0 && this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
+      this.fileStates.clear();
     }
   }
 
@@ -380,21 +132,19 @@ export class TranscriptWatcher {
    * Stop all watchers
    */
   stopAll(): void {
-    for (const [agentId] of this.watchers) {
-      this.stopWatching(agentId);
-    }
-    this.pendingAgents = [];
-    this.assignedFiles.clear();
+    this.activeAgents.clear();
+    this.fileStates.clear();
     this.subagentsDir = null;
 
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
+    console.log('[TranscriptWatcher] Stopped all watchers');
   }
 
   /**
-   * Start polling for changes
+   * Start polling for changes in all subagent files
    */
   private startPolling(): void {
     if (this.pollInterval) {
@@ -402,40 +152,52 @@ export class TranscriptWatcher {
     }
 
     this.pollInterval = setInterval(async () => {
-      // Check for new files for pending agents
-      while (this.pendingAgents.length > 0) {
-        const agentId = this.pendingAgents[0];
-        const assigned = await this.tryAssignFile(agentId);
-        if (assigned) {
-          this.pendingAgents.shift();
-        } else {
-          break; // No more files available
-        }
-      }
-
-      // Check for new content in watched files
-      for (const [, state] of this.watchers) {
-        if (state.isActive) {
-          await this.checkForNewContent(state);
-        }
-      }
+      await this.pollAllFiles();
     }, this.POLL_INTERVAL_MS);
+
+    // Do initial poll
+    this.pollAllFiles();
   }
 
   /**
-   * Check for new content in a transcript file
+   * Poll all subagent files for new content
    */
-  private async checkForNewContent(state: WatcherState): Promise<void> {
+  private async pollAllFiles(): Promise<void> {
+    if (!this.subagentsDir) return;
+
+    const files = await getAgentFiles(this.subagentsDir);
+
+    for (const fileInfo of files) {
+      await this.checkFileForNewContent(fileInfo.path);
+    }
+  }
+
+  /**
+   * Check a file for new content and emit messages with embedded agentId
+   */
+  private async checkFileForNewContent(filePath: string): Promise<void> {
     try {
-      const stats = await stat(state.filePath);
+      const stats = await stat(filePath);
       const fileSize = stats.size;
 
-      if (fileSize <= state.lastPosition) {
+      // Get or create file state
+      let fileState = this.fileStates.get(filePath);
+      if (!fileState) {
+        fileState = {
+          lastPosition: 0,
+          filePath,
+          agentId: '', // Not used - agentId comes from JSONL content
+          isActive: true
+        };
+        this.fileStates.set(filePath, fileState);
+      }
+
+      if (fileSize <= fileState.lastPosition) {
         return; // No new content
       }
 
       // Read new content
-      const content = await readFile(state.filePath, 'utf-8');
+      const content = await readFile(filePath, 'utf-8');
       const lines = content.split('\n');
 
       // Process new lines
@@ -443,22 +205,25 @@ export class TranscriptWatcher {
       for (const line of lines) {
         currentPosition += line.length + 1; // +1 for newline
 
-        if (currentPosition <= state.lastPosition) {
+        if (currentPosition <= fileState.lastPosition) {
           continue;
         }
 
         const messages = parseTranscriptLine(line);
         for (const message of messages) {
-          message.agentId = state.agentId;
-          this.callbacks.onMessage(message);
+          // Use agentId from JSONL content (already extracted by parseTranscriptLine)
+          // Only emit if this agent is being watched
+          if (message.agentId && this.activeAgents.has(message.agentId)) {
+            this.callbacks.onMessage(message);
+          }
         }
       }
 
-      state.lastPosition = fileSize;
+      fileState.lastPosition = fileSize;
     } catch (error) {
       // File might not exist yet, which is fine
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        this.callbacks.onError?.(error as Error, state.agentId);
+        console.error('[TranscriptWatcher] Error reading file:', filePath, error);
       }
     }
   }

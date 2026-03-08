@@ -14,6 +14,8 @@
 
 export interface AgentStartEvent {
   agentId: string;
+  /** Short hash agentId extracted from transcript path (e.g., "ab215e8" from "agent-ab215e8.jsonl") */
+  transcriptAgentId?: string;
   agentType: string;
   toolUseId?: string;  // The tool_use_id that spawned this agent (for message routing)
 }
@@ -78,16 +80,29 @@ export function buildBaseHooks(callbacks: HookCallbacks): SDKHooks {
         // SDK passes: agent_type (internal type) and potentially subagent_type (user-specified)
         const agentType = input.subagent_type || input.agent_type || input.type || 'unknown';
 
+        // Extract short agentId from transcript path if available
+        // Format: ".../subagents/agent-ab215e8.jsonl" -> "ab215e8"
+        let transcriptAgentId: string | undefined;
+        if (input.agent_transcript_path) {
+          const match = input.agent_transcript_path.match(/agent-([a-f0-9]+)\.jsonl$/i);
+          if (match) {
+            transcriptAgentId = match[1];
+          }
+        }
+
         console.log('[HookBuilder] Resolved agentType:', agentType,
           '(subagent_type:', input.subagent_type,
           ', agent_type:', input.agent_type,
           ', type:', input.type,
-          ', tool_use_id:', input.tool_use_id, ')');
+          ', tool_use_id:', input.tool_use_id,
+          ', agent_id:', input.agent_id,
+          ', transcriptAgentId:', transcriptAgentId, ')');
 
         callbacks.onAgentStart({
           agentId: input.agent_id || '',
           agentType,
-          toolUseId: input.tool_use_id
+          toolUseId: input.tool_use_id,
+          transcriptAgentId
         });
 
         return { continue: true };
