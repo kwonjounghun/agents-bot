@@ -6,44 +6,6 @@ export type MessageType = 'text' | 'thinking' | 'tool_use' | 'tool_result' | 're
 // Agent team types - dynamic, any string role name is allowed
 export type AgentRole = string;
 
-export interface AgentWidget {
-  id: string;
-  role: AgentRole;
-  windowId: number;
-  position: { x: number; y: number };
-  isActive: boolean;
-}
-
-export interface AgentTeam {
-  id: string;
-  name: string;
-  agents: AgentWidget[];
-  status: 'idle' | 'active' | 'complete';
-}
-
-// Widget-specific message
-export interface WidgetMessage {
-  agentId: string;
-  role: AgentRole;
-  type: 'thinking' | 'speaking' | 'tool_use' | 'tool_result' | 'complete';
-  content: string;
-  timestamp: number;
-  sectionId?: string; // ID to track same section
-  isNewSection?: boolean; // Flag for new section start
-  toolName?: string; // Tool name for tool_use/tool_result
-  toolUseId?: string; // Tool use ID for correlation
-}
-
-// Speech message for accumulating speech bubbles
-export interface SpeechMessage {
-  id: string;
-  type: 'thinking' | 'speaking' | 'tool_use' | 'tool_result';
-  content: string;
-  timestamp: number;
-  isComplete: boolean; // Whether this section is complete
-  toolName?: string; // Tool name for tool messages
-}
-
 // Simplified agent message for UI display
 export interface AgentMessage {
   id: string;
