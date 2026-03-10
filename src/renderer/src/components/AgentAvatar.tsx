@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import type { AgentRole, AgentStatus } from '../../../shared/types';
 import { AGENT_CONFIG } from '../../../shared/agentTypes';
+import { isActiveStatus } from '../utils/statusHelpers';
 
 interface AgentAvatarProps {
   role: AgentRole;
@@ -17,7 +18,7 @@ export const AgentAvatar: React.FC<AgentAvatarProps> = ({ role, status, size = '
     lg: 'w-20 h-20 text-4xl'
   };
 
-  const isAnimating = status === 'thinking' || status === 'responding' || status === 'using_tool';
+  const isAnimating = isActiveStatus(status);
 
   return (
     <motion.div

@@ -47,7 +47,7 @@ export class OMCIntegration extends EventEmitter {
   private workingDirectory: string;
   private sdkOmcEnabled: boolean = false;
   private initialized: boolean = false;
-  private hooks: any = null;
+  private hooks: unknown = null;
 
   constructor(config: OMCIntegrationConfig) {
     super();
@@ -79,7 +79,7 @@ export class OMCIntegration extends EventEmitter {
   /**
    * Get current hooks
    */
-  getHooks(): any {
+  getHooks(): unknown {
     return this.hooks;
   }
 

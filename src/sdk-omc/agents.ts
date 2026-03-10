@@ -5,7 +5,7 @@
  * Each agent has a specific role, prompt, tool access, and model tier.
  */
 
-import type { AgentConfig, ModelType } from './types';
+import type { ModelType } from './types';
 
 // SDK AgentDefinition type (from @anthropic-ai/claude-agent-sdk)
 export interface AgentDefinition {

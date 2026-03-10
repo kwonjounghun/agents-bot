@@ -8,6 +8,8 @@ import React, { useRef, useEffect, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Agent } from '../../contexts/TeamsContext';
 import { getAgentConfig } from '../../../../shared/agentTypes';
+import { isActiveStatus, getStatusText } from '../../utils/statusHelpers';
+import { MessageBubble } from '../../components/MessageBubble';
 
 interface AgentPanelProps {
   agent: Agent;
@@ -35,19 +37,7 @@ export const AgentPanel = memo(function AgentPanel({ agent }: AgentPanelProps) {
     }
   };
 
-  const getStatusText = () => {
-    switch (agent.status) {
-      case 'thinking': return 'Thinking...';
-      case 'responding': return 'Responding...';
-      case 'using_tool': return 'Using tool...';
-      case 'complete': return 'Complete';
-      case 'error': return 'Error';
-      case 'stopped': return 'Stopped';
-      default: return 'Idle';
-    }
-  };
-
-  const isActive = agent.status === 'thinking' || agent.status === 'responding' || agent.status === 'using_tool';
+  const isActive = isActiveStatus(agent.status);
 
   return (
     <motion.div
@@ -79,7 +69,7 @@ export const AgentPanel = memo(function AgentPanel({ agent }: AgentPanelProps) {
             <div className={`w-1.5 h-1.5 rounded-full ${isActive ? 'animate-pulse' : ''}`}
               style={{ backgroundColor: isActive ? config.color : '#64748b' }}
             />
-            <span className="text-slate-400 text-xs">{getStatusText()}</span>
+            <span className="text-slate-400 text-xs">{getStatusText(agent.status)}</span>
           </div>
         </div>
       </div>
@@ -98,47 +88,5 @@ export const AgentPanel = memo(function AgentPanel({ agent }: AgentPanelProps) {
         <div ref={messagesEndRef} />
       </div>
     </motion.div>
-  );
-});
-
-const MessageBubble = memo(function MessageBubble({ message }: { message: Agent['messages'][0] }) {
-  const getStyle = () => {
-    switch (message.type) {
-      case 'thinking':
-        return 'bg-yellow-900/30 border-yellow-700/50 text-yellow-200';
-      case 'tool_use':
-        return 'bg-blue-900/30 border-blue-700/50 text-blue-200';
-      case 'error':
-        return 'bg-red-900/30 border-red-700/50 text-red-200';
-      case 'result':
-        return 'bg-emerald-900/30 border-emerald-700/50 text-emerald-200';
-      default:
-        return 'bg-slate-700/50 border-slate-600/50 text-white/90';
-    }
-  };
-
-  const getIcon = () => {
-    switch (message.type) {
-      case 'thinking': return '💭';
-      case 'tool_use': return '🔧';
-      case 'error': return '❌';
-      case 'result': return '✅';
-      default: return null;
-    }
-  };
-
-  return (
-    <div className={`p-2 rounded-lg border text-xs ${getStyle()}`}>
-      {(() => {
-        const icon = getIcon();
-        return icon ? <span className="mr-1">{icon}</span> : null;
-      })()}
-      <span className="whitespace-pre-wrap break-words">
-        {message.content}
-      </span>
-      {message.isStreaming && (
-        <span className="inline-block w-1.5 h-3 bg-current animate-pulse ml-0.5" />
-      )}
-    </div>
   );
 });

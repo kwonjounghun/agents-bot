@@ -13,7 +13,8 @@ export type AgentStatus =
   | 'responding'
   | 'using_tool'
   | 'complete'
-  | 'error';
+  | 'error'
+  | 'stopped';
 
 /**
  * Status display configuration
@@ -39,6 +40,8 @@ export function getStatusText(status: AgentStatus): string {
       return 'Done';
     case 'error':
       return 'Error';
+    case 'stopped':
+      return 'Stopped';
     default:
       return 'Ready';
   }

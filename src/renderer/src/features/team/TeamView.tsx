@@ -10,6 +10,7 @@ import { useTeams } from '../../contexts/TeamsContext';
 import { AgentGrid } from './AgentGrid';
 import { TeamInput } from './TeamInput';
 import type { AgentStatus } from '../../../../shared/types';
+import { isActiveStatus } from '../../utils/statusHelpers';
 
 export function TeamView() {
   const { activeTeam, createTeam } = useTeams();
@@ -127,20 +128,16 @@ interface StopButtonAgent {
 }
 
 function StopButton({ teamId, agents }: { teamId: string; agents: StopButtonAgent[] }) {
+  const { stopAllAgents } = useTeams();
   // Show stop button if any agent is processing
-  const isAnyAgentProcessing = agents.some(
-    (agent) =>
-      agent.status === 'thinking' ||
-      agent.status === 'responding' ||
-      agent.status === 'using_tool'
-  );
+  const isAnyAgentProcessing = agents.some((agent) => isActiveStatus(agent.status));
 
   if (!isAnyAgentProcessing) {
     return null;
   }
 
   const handleStop = () => {
-    window.teamAPI?.stopAllAgents(teamId);
+    stopAllAgents(teamId);
   };
 
   return (

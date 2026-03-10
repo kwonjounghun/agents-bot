@@ -24,19 +24,8 @@
 
 import type { AgentRole } from '../../shared/types';
 import { AgentIdMapper, createAgentIdMapper } from './routing/agentIdMapper';
-
-// Agent type normalization (from oh-my-claudecode:xxx to xxx)
-const AGENT_TYPE_PREFIX = 'oh-my-claudecode:';
-
-// Map SDK built-in agent types to our agent types (moved to module scope for performance)
-const AGENT_TYPE_MAP: Readonly<Record<string, string>> = {
-  'general-purpose': 'executor',
-  'general': 'executor',
-  'default': 'executor',
-  'plan': 'planner',
-  'bash': 'executor',
-  'explorer': 'explore',
-};
+import { normalizeAgentType } from './agentNormalizer';
+export { normalizeAgentType };
 
 /**
  * Represents an active agent context in the execution stack
@@ -62,31 +51,6 @@ export interface StreamRouterConfig {
 const DEFAULT_CONFIG: StreamRouterConfig = {
   maxContextDepth: 10,
 };
-
-/**
- * Normalizes SDK agent type to a simple role name
- * e.g., "oh-my-claudecode:executor" -> "executor"
- * e.g., "Explore" -> "explore"
- */
-export function normalizeAgentType(agentType: string): AgentRole {
-  if (!agentType) return 'executor';
-
-  // Remove oh-my-claudecode: prefix if present
-  let normalized = agentType;
-  if (normalized.startsWith(AGENT_TYPE_PREFIX)) {
-    normalized = normalized.slice(AGENT_TYPE_PREFIX.length);
-  }
-
-  // Convert to lowercase for consistent matching
-  normalized = normalized.toLowerCase();
-
-  // Use module-scope map for better performance
-  if (AGENT_TYPE_MAP[normalized]) {
-    return AGENT_TYPE_MAP[normalized];
-  }
-
-  return normalized;
-}
 
 /**
  * StreamRouter manages agent context for message routing.

@@ -54,6 +54,7 @@ interface TeamsContextValue {
   deleteTeam: (teamId: string) => Promise<void>;
   setActiveTeam: (teamId: string) => Promise<void>;
   sendCommand: (teamId: string, command: string) => void;
+  stopAllAgents: (teamId: string) => void;
 }
 
 const TeamsContext = createContext<TeamsContextValue | null>(null);
@@ -225,9 +226,6 @@ export function TeamsProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'CLEAR_ALL' });
     });
 
-    // Notify ready
-    window.claudeAPI?.notifyReady();
-
     return () => {
       unsubInit?.();
       unsubCreated?.();
@@ -260,6 +258,10 @@ export function TeamsProvider({ children }: { children: ReactNode }) {
     window.teamAPI?.sendCommand(teamId, command);
   }, []);
 
+  const stopAllAgents = useCallback((teamId: string) => {
+    window.teamAPI?.stopAllAgents(teamId);
+  }, []);
+
   // Memoize activeTeam to prevent unnecessary recalculations
   const activeTeam = useMemo(
     () => state.activeTeamId ? state.teams.get(state.activeTeamId) || null : null,
@@ -268,8 +270,8 @@ export function TeamsProvider({ children }: { children: ReactNode }) {
 
   // Memoize context value to prevent all consumers from re-rendering on every state change
   const contextValue = useMemo(
-    () => ({ state, activeTeam, createTeam, deleteTeam, setActiveTeam, sendCommand }),
-    [state, activeTeam, createTeam, deleteTeam, setActiveTeam, sendCommand]
+    () => ({ state, activeTeam, createTeam, deleteTeam, setActiveTeam, sendCommand, stopAllAgents }),
+    [state, activeTeam, createTeam, deleteTeam, setActiveTeam, sendCommand, stopAllAgents]
   );
 
   return (

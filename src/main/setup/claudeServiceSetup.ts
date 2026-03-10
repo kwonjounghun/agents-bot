@@ -200,10 +200,10 @@ function setupMessageHandlers(
 
     switch (message.type) {
       case 'text':
-        handleTextMessage(message, deps, leaderStateManager);
+        handleStreamingMessage('text', message, deps, leaderStateManager);
         break;
       case 'thinking':
-        handleThinkingMessage(message, deps, leaderStateManager);
+        handleStreamingMessage('thinking', message, deps, leaderStateManager);
         break;
       case 'tool_use':
         handleToolUseMessage(message, deps, leaderStateManager);
@@ -219,115 +219,61 @@ function setupMessageHandlers(
 }
 
 /**
- * Handle text messages
+ * Handle text and thinking messages (unified streaming handler)
  */
-function handleTextMessage(
+function handleStreamingMessage(
+  messageType: 'text' | 'thinking',
   message: ClaudeAgentMessage,
   deps: ClaudeServiceDependencies,
   leaderStateManager: LeaderStateManager
 ): void {
-  const { textId } = deps.getMessageIds();
-  const newTextId = textId || `text-${Date.now()}`;
-  deps.setMessageIds(newTextId, deps.getMessageIds().thinkingId);
-
-  deps.sendToRenderer('agent:status', { status: 'responding' as AgentStatus });
-  deps.sendToRenderer('agent:message', {
-    messageId: newTextId,
-    chunk: message.content,
-    fullText: message.content,
-    type: 'text',
-    isComplete: false,
-  });
-
-  // Route leader messages (no parentToolUseId) to TeamManager with accumulation
-  if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
-    const activeTeam = deps.teamManager.getActiveTeam();
-    if (activeTeam) {
-      // Get per-team state
-      const leaderState = leaderStateManager.get(activeTeam.id);
-
-      // Skip if content equals accumulated (this is the final complete message)
-      if (leaderState.accumulatedContent === message.content) {
-        console.log('[ClaudeServiceSetup] Skipping duplicate final message');
-        return;
-      }
-
-      // Check if type changed -> new message bubble
-      if (leaderState.currentType !== 'text') {
-        // Type changed, create new message
-        const msgId = `leader-text-${Date.now()}`;
-        leaderState.currentType = 'text';
-        leaderState.currentMessageId = msgId;
-        leaderState.accumulatedContent = message.content;
-
-        deps.teamManager.addAgentMessage(activeTeam.id, activeTeam.leaderId, {
-          id: msgId,
-          type: 'text',
-          content: message.content,
-          timestamp: Date.now(),
-          isStreaming: true,
-        });
-      } else {
-        // Same type, accumulate content
-        leaderState.accumulatedContent += message.content;
-
-        if (leaderState.currentMessageId) {
-          deps.teamManager.updateLastAgentMessage(
-            activeTeam.id,
-            activeTeam.leaderId,
-            leaderState.accumulatedContent
-          );
-        }
-      }
-    }
+  const ids = deps.getMessageIds();
+  if (messageType === 'text') {
+    const newTextId = ids.textId || `text-${Date.now()}`;
+    deps.setMessageIds(newTextId, ids.thinkingId);
+    deps.sendToRenderer('agent:status', { status: 'responding' as AgentStatus });
+    deps.sendToRenderer('agent:message', {
+      messageId: newTextId,
+      chunk: message.content,
+      fullText: message.content,
+      type: 'text',
+      isComplete: false,
+    });
+  } else {
+    const newThinkingId = ids.thinkingId || `thinking-${Date.now()}`;
+    deps.setMessageIds(ids.textId, newThinkingId);
+    deps.sendToRenderer('agent:status', { status: 'thinking' as AgentStatus });
+    deps.sendToRenderer('agent:message', {
+      messageId: newThinkingId,
+      chunk: message.content,
+      fullText: message.content,
+      type: 'thinking',
+      isComplete: false,
+    });
   }
-}
-
-/**
- * Handle thinking messages
- */
-function handleThinkingMessage(
-  message: ClaudeAgentMessage,
-  deps: ClaudeServiceDependencies,
-  leaderStateManager: LeaderStateManager
-): void {
-  const { thinkingId } = deps.getMessageIds();
-  const newThinkingId = thinkingId || `thinking-${Date.now()}`;
-  deps.setMessageIds(deps.getMessageIds().textId, newThinkingId);
-
-  deps.sendToRenderer('agent:status', { status: 'thinking' as AgentStatus });
-  deps.sendToRenderer('agent:message', {
-    messageId: newThinkingId,
-    chunk: message.content,
-    fullText: message.content,
-    type: 'thinking',
-    isComplete: false,
-  });
 
   // Route leader messages (no parentToolUseId) to TeamManager with accumulation
   if (deps.routeLeaderToTeam && !message.parentToolUseId && deps.teamManager) {
     const activeTeam = deps.teamManager.getActiveTeam();
     if (activeTeam) {
-      // Get per-team state
       const leaderState = leaderStateManager.get(activeTeam.id);
 
       // Skip if content equals accumulated (this is the final complete message)
       if (leaderState.accumulatedContent === message.content) {
-        console.log('[ClaudeServiceSetup] Skipping duplicate final thinking message');
+        console.log(`[ClaudeServiceSetup] Skipping duplicate final ${messageType} message`);
         return;
       }
 
       // Check if type changed -> new message bubble
-      if (leaderState.currentType !== 'thinking') {
-        // Type changed, create new message
-        const msgId = `leader-thinking-${Date.now()}`;
-        leaderState.currentType = 'thinking';
+      if (leaderState.currentType !== messageType) {
+        const msgId = `leader-${messageType}-${Date.now()}`;
+        leaderState.currentType = messageType;
         leaderState.currentMessageId = msgId;
         leaderState.accumulatedContent = message.content;
 
         deps.teamManager.addAgentMessage(activeTeam.id, activeTeam.leaderId, {
           id: msgId,
-          type: 'thinking',
+          type: messageType,
           content: message.content,
           timestamp: Date.now(),
           isStreaming: true,

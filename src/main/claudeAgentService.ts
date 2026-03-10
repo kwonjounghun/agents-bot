@@ -24,7 +24,8 @@ import {
   mergeHooks,
   buildQueryOptions,
   type AgentStartEvent,
-  type AgentStopEvent
+  type AgentStopEvent,
+  type SDKHooks
 } from './services/hookBuilder';
 
 // Composed services
@@ -210,7 +211,7 @@ export class ClaudeAgentService extends EventEmitter {
       });
 
       // Merge OMC hooks with base hooks
-      const finalHooks = mergeHooks(baseHooks, this.omcIntegration.getHooks());
+      const finalHooks = mergeHooks(baseHooks, this.omcIntegration.getHooks() as SDKHooks | null);
 
       // Build query options
       const queryOpts = buildQueryOptions({
@@ -429,14 +430,6 @@ export class ClaudeAgentService extends EventEmitter {
     this.persistentModeService.on('modeEnded', (data) => {
       this.emit('persistentModeEnded', data);
     });
-  }
-
-  async executeRalph(task: string): Promise<ExecutionResult> {
-    return this.executePersistentMode('ralph', task);
-  }
-
-  async executeAutopilot(goal: string): Promise<ExecutionResult> {
-    return this.executePersistentMode('autopilot', goal);
   }
 
   stopPersistentMode(): void {

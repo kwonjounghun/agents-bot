@@ -291,6 +291,27 @@ contextBridge.exposeInMainWorld('teamAPI', {
     ipcRenderer.on('team:error', handler);
     return () => ipcRenderer.removeListener('team:error', handler);
   },
+
+  // SDK agent joined (from claudeServiceSetup agent lifecycle)
+  onAgentJoined: (callback: (data: { agentId: string; role: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { agentId: string; role: string }) => callback(data);
+    ipcRenderer.on('team:agent-joined', handler);
+    return () => ipcRenderer.removeListener('team:agent-joined', handler);
+  },
+
+  // SDK agent completed
+  onAgentCompleted: (callback: (data: { agentId: string; role: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { agentId: string; role: string }) => callback(data);
+    ipcRenderer.on('team:agent-completed', handler);
+    return () => ipcRenderer.removeListener('team:agent-completed', handler);
+  },
+
+  // SDK agents available list
+  onAgentsAvailable: (callback: (data: { agents: string[] }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { agents: string[] }) => callback(data);
+    ipcRenderer.on('team:agents-available', handler);
+    return () => ipcRenderer.removeListener('team:agents-available', handler);
+  },
 });
 
 // Type declarations for global window object
@@ -335,6 +356,9 @@ declare global {
       onAgentMessageUpdate: (callback: (data: { teamId: string; agentId: string; messageId: string; content: string; isStreaming: boolean }) => void) => () => void;
       onAllCleared: (callback: () => void) => () => void;
       onError: (callback: (data: { teamId: string; error: string }) => void) => () => void;
+      onAgentJoined: (callback: (data: { agentId: string; role: string }) => void) => () => void;
+      onAgentCompleted: (callback: (data: { agentId: string; role: string }) => void) => () => void;
+      onAgentsAvailable: (callback: (data: { agents: string[] }) => void) => () => void;
     };
   }
 }

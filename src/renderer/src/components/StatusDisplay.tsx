@@ -12,6 +12,7 @@
  */
 
 import type { AgentStatus } from '../../../shared/types';
+import { getStatusText } from '../utils/statusHelpers';
 
 export interface StatusDisplayProps {
   /**
@@ -23,30 +24,6 @@ export interface StatusDisplayProps {
    * Name of the tool currently being used (if any).
    */
   currentToolUse: string | null;
-}
-
-/**
- * Get the status text for display.
- *
- * @param status - Current agent status
- * @param toolUse - Current tool being used
- * @returns Human-readable status text
- */
-export function getStatusText(status: AgentStatus, toolUse: string | null): string {
-  switch (status) {
-    case 'thinking':
-      return 'Thinking...';
-    case 'responding':
-      return 'Responding...';
-    case 'using_tool':
-      return toolUse ? `Using ${toolUse}...` : 'Using tool...';
-    case 'complete':
-      return 'Complete';
-    case 'error':
-      return 'Error';
-    default:
-      return 'Ready';
-  }
 }
 
 /**

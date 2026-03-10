@@ -101,20 +101,6 @@ export class PersistentModeService extends EventEmitter {
   }
 
   /**
-   * Execute Ralph mode - persistent loop until task completion
-   */
-  async executeRalph(task: string): Promise<ExecutionResult> {
-    return this.execute('ralph', task);
-  }
-
-  /**
-   * Execute Autopilot mode - full autonomous execution
-   */
-  async executeAutopilot(goal: string): Promise<ExecutionResult> {
-    return this.execute('autopilot', goal);
-  }
-
-  /**
    * Stop persistent mode execution
    */
   stop(): void {

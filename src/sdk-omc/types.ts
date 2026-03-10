@@ -19,7 +19,7 @@ export type AgentCategory =
   | 'utility';
 
 // Agent configuration
-export interface AgentConfig {
+export interface AgentSpec {
   name: string;
   description: string;
   prompt: string;

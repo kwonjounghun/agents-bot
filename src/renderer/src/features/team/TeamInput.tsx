@@ -7,6 +7,7 @@
 import React, { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useTeams } from '../../contexts/TeamsContext';
+import { isActiveStatus } from '../../utils/statusHelpers';
 
 interface TeamInputProps {
   teamId: string;
@@ -21,7 +22,7 @@ export function TeamInput({ teamId, leaderId }: TeamInputProps) {
 
   const team = state.teams.get(teamId);
   const leader = team?.agents.find(a => a.id === leaderId);
-  const isProcessing = leader?.status === 'thinking' || leader?.status === 'responding' || leader?.status === 'using_tool';
+  const isProcessing = leader ? isActiveStatus(leader.status) : false;
 
   const handleSend = () => {
     if (!input.trim() || isProcessing) return;

@@ -38,6 +38,7 @@ export interface SpeechMessage {
   content: string;
   timestamp: number;
   isComplete: boolean;
+  toolName?: string;
 }
 
 /**
@@ -45,9 +46,12 @@ export interface SpeechMessage {
  */
 export interface WidgetMessage {
   agentId: string;
+  role: string;
   type: WidgetMessageType;
   content: string;
-  timestamp?: number;
+  timestamp: number;
   sectionId?: string;
   isNewSection?: boolean;
+  toolName?: string;
+  toolUseId?: string;
 }
