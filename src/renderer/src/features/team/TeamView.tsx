@@ -10,7 +10,7 @@ import { useTeams } from '../../contexts/TeamsContext';
 import { AgentGrid } from './AgentGrid';
 import { TeamInput } from './TeamInput';
 import type { AgentStatus } from '../../../../shared/types';
-import { isActiveStatus } from '../../utils/statusHelpers';
+import { isActiveStatus, getTeamStatusStyle } from '../../utils/statusHelpers';
 
 export function TeamView() {
   const { activeTeam, createTeam } = useTeams();
@@ -104,19 +104,8 @@ export function TeamView() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const getStatusStyle = () => {
-    switch (status) {
-      case 'active':
-        return 'bg-green-900/30 border-green-700/50 text-green-400';
-      case 'complete':
-        return 'bg-blue-900/30 border-blue-700/50 text-blue-400';
-      default:
-        return 'bg-slate-700/30 border-slate-600/50 text-slate-400';
-    }
-  };
-
   return (
-    <span className={`px-2 py-1 rounded-full border text-xs ${getStatusStyle()}`}>
+    <span className={`px-2 py-1 rounded-full border text-xs ${getTeamStatusStyle(status)}`}>
       {status}
     </span>
   );

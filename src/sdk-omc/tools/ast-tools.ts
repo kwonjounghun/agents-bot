@@ -66,6 +66,34 @@ function extractMetaVars(pattern: string): string[] {
 }
 
 /**
+ * Walk a directory recursively, calling onFile for each file encountered.
+ * Skips dotfiles and node_modules. Stops early if shouldStop returns true.
+ */
+function walkDirectory(dir: string, onFile: (file: string) => void, shouldStop?: () => boolean): void {
+  if (!fs.existsSync(dir)) return;
+
+  const stat = fs.statSync(dir);
+  if (stat.isFile()) {
+    onFile(dir);
+    return;
+  }
+
+  const entries = fs.readdirSync(dir);
+  for (const entry of entries) {
+    if (shouldStop?.()) break;
+    if (entry.startsWith('.') || entry === 'node_modules') continue;
+    const fullPath = path.join(dir, entry);
+    const entryStat = fs.statSync(fullPath);
+
+    if (entryStat.isDirectory()) {
+      walkDirectory(fullPath, onFile, shouldStop);
+    } else if (entryStat.isFile()) {
+      onFile(fullPath);
+    }
+  }
+}
+
+/**
  * Get language from file extension
  */
 function getLanguage(file: string): string {
@@ -183,32 +211,7 @@ Examples:
       results.push(...matches);
     };
 
-    const processDirectory = (dir: string) => {
-      if (!fs.existsSync(dir)) return;
-
-      const stat = fs.statSync(dir);
-      if (stat.isFile()) {
-        processFile(dir);
-        return;
-      }
-
-      const entries = fs.readdirSync(dir);
-      for (const entry of entries) {
-        if (entry.startsWith('.') || entry === 'node_modules') continue;
-        const fullPath = path.join(dir, entry);
-        const entryStat = fs.statSync(fullPath);
-
-        if (entryStat.isDirectory()) {
-          processDirectory(fullPath);
-        } else if (entryStat.isFile()) {
-          processFile(fullPath);
-        }
-
-        if (results.length >= maxResults) break;
-      }
-    };
-
-    processDirectory(searchPath);
+    walkDirectory(searchPath, processFile, () => results.length >= maxResults);
 
     const limited = results.slice(0, maxResults);
 
@@ -341,30 +344,7 @@ IMPORTANT: dryRun=true (default) only previews changes. Set dryRun=false to appl
       }
     };
 
-    const processDirectory = (dir: string) => {
-      if (!fs.existsSync(dir)) return;
-
-      const stat = fs.statSync(dir);
-      if (stat.isFile()) {
-        processFile(dir);
-        return;
-      }
-
-      const entries = fs.readdirSync(dir);
-      for (const entry of entries) {
-        if (entry.startsWith('.') || entry === 'node_modules') continue;
-        const fullPath = path.join(dir, entry);
-        const entryStat = fs.statSync(fullPath);
-
-        if (entryStat.isDirectory()) {
-          processDirectory(fullPath);
-        } else if (entryStat.isFile()) {
-          processFile(fullPath);
-        }
-      }
-    };
-
-    processDirectory(searchPath);
+    walkDirectory(searchPath, processFile);
 
     if (results.length === 0) {
       return {

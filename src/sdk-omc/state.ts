@@ -243,6 +243,24 @@ export function createTeamState(teamName: string, agentCount: number, task: stri
 }
 
 /**
+ * Shared read-transform-write helper for state mutations
+ */
+async function withStateTransaction<T>(
+  mode: SkillMode,
+  workingDirectory: string,
+  options: StateOptions | undefined,
+  transform: (state: ModeState) => ModeState & T,
+  throwIfMissing = false
+): Promise<void> {
+  const state = await readState(mode, workingDirectory, options);
+  if (!state) {
+    if (throwIfMissing) throw new Error(`No active ${mode} state`);
+    return;
+  }
+  await writeState(mode, transform(state), workingDirectory, options);
+}
+
+/**
  * Increment iteration for a mode
  */
 export async function incrementIteration(
@@ -250,14 +268,11 @@ export async function incrementIteration(
   workingDirectory: string,
   options?: StateOptions
 ): Promise<number> {
-  const state = await readState(mode, workingDirectory, options);
-  if (!state) {
-    throw new Error(`No active ${mode} state`);
-  }
-
-  const newIteration = (state.iteration || 0) + 1;
-  await writeState(mode, { ...state, iteration: newIteration }, workingDirectory, options);
-
+  let newIteration = 0;
+  await withStateTransaction(mode, workingDirectory, options, (state) => {
+    newIteration = (state.iteration || 0) + 1;
+    return { ...state, iteration: newIteration };
+  }, true);
   return newIteration;
 }
 
@@ -270,12 +285,7 @@ export async function updatePhase(
   workingDirectory: string,
   options?: StateOptions
 ): Promise<void> {
-  const state = await readState(mode, workingDirectory, options);
-  if (!state) {
-    throw new Error(`No active ${mode} state`);
-  }
-
-  await writeState(mode, { ...state, currentPhase: phase }, workingDirectory, options);
+  await withStateTransaction(mode, workingDirectory, options, (state) => ({ ...state, currentPhase: phase }), true);
 }
 
 /**
@@ -286,17 +296,12 @@ export async function completeMode(
   workingDirectory: string,
   options?: StateOptions
 ): Promise<void> {
-  const state = await readState(mode, workingDirectory, options);
-  if (!state) {
-    return;
-  }
-
-  await writeState(mode, {
+  await withStateTransaction(mode, workingDirectory, options, (state) => ({
     ...state,
     active: false,
     completedAt: new Date().toISOString(),
     currentPhase: 'completed'
-  }, workingDirectory, options);
+  }));
 }
 
 /**
@@ -308,16 +313,11 @@ export async function failMode(
   workingDirectory: string,
   options?: StateOptions
 ): Promise<void> {
-  const state = await readState(mode, workingDirectory, options);
-  if (!state) {
-    return;
-  }
-
-  await writeState(mode, {
+  await withStateTransaction(mode, workingDirectory, options, (state) => ({
     ...state,
     active: false,
     completedAt: new Date().toISOString(),
     currentPhase: 'failed',
     error
-  }, workingDirectory, options);
+  }));
 }

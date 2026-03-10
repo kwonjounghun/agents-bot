@@ -14,6 +14,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ToolDefinition } from '../skills';
+import { ensureOmcDir } from './utils/fs';
 
 const MEMORY_FILENAME = 'project-memory.json';
 
@@ -36,16 +37,6 @@ interface ProjectMemory {
  */
 function getMemoryPath(workingDirectory: string): string {
   return path.join(workingDirectory, '.omc', MEMORY_FILENAME);
-}
-
-/**
- * Ensure .omc directory exists
- */
-function ensureOmcDir(workingDirectory: string): void {
-  const omcDir = path.join(workingDirectory, '.omc');
-  if (!fs.existsSync(omcDir)) {
-    fs.mkdirSync(omcDir, { recursive: true });
-  }
 }
 
 /**

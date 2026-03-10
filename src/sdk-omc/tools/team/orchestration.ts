@@ -11,6 +11,42 @@ import { readState, writeState, clearState } from '../../state';
 import type { TeamState, TeamStage, TeamTask } from './types';
 import { ensureTeamDirectory, getTeamDirectory, getAgentsForStage } from './utils';
 
+// Marks the current running stage as completed in stageHistory (mutates in place)
+function completeCurrentStageHistory(state: TeamState): void {
+  const current = state.stageHistory.find(h => h.stage === state.currentPhase && h.status === 'running');
+  if (current) {
+    current.completedAt = new Date().toISOString();
+    current.status = 'completed';
+  }
+}
+
+// Returns true if fix loop has exceeded maxFixLoops (and increments the counter)
+function incrementFixLoopAndCheckExceeded(state: TeamState): boolean {
+  state.fixLoopCount++;
+  return state.fixLoopCount > state.maxFixLoops;
+}
+
+// Applies the stage transition to state (mutates in place)
+function applyStageTransition(state: TeamState, nextStage: TeamStage): void {
+  state.currentPhase = nextStage;
+  state.stageHistory.push({
+    stage: nextStage,
+    startedAt: new Date().toISOString(),
+    status: 'running'
+  });
+}
+
+// Builds member list for a given stage
+function buildMembersForStage(nextStage: TeamStage): TeamState['members'] {
+  const stageAgents = getAgentsForStage(nextStage);
+  return stageAgents.slice(0, 3).map((agent, i) => ({
+    name: `${agent}-${i + 1}`,
+    role: agent,
+    agentType: agent,
+    status: 'idle' as const
+  }));
+}
+
 /**
  * Team Transition Tool
  *
@@ -51,11 +87,7 @@ export const teamTransitionTool: ToolDefinition = {
     const previousStage = state.currentPhase;
 
     // Update stage history
-    const currentHistory = state.stageHistory.find(h => h.stage === previousStage && h.status === 'running');
-    if (currentHistory) {
-      currentHistory.completedAt = new Date().toISOString();
-      currentHistory.status = 'completed';
-    }
+    completeCurrentStageHistory(state);
 
     // Handle terminal states
     if (nextStage === 'complete' || nextStage === 'failed') {
@@ -83,8 +115,7 @@ ${reason ? `Reason: ${reason}` : ''}`
 
     // Handle fix loop
     if (nextStage === 'team-fix') {
-      state.fixLoopCount++;
-      if (state.fixLoopCount > state.maxFixLoops) {
+      if (incrementFixLoopAndCheckExceeded(state)) {
         state.active = false;
         await writeState('team', state, cwd, stateOptions);
         return {
@@ -100,21 +131,10 @@ Use team_create to start a new team.`
     }
 
     // Transition to new stage
-    state.currentPhase = nextStage as TeamStage;
-    state.stageHistory.push({
-      stage: nextStage as TeamStage,
-      startedAt: new Date().toISOString(),
-      status: 'running'
-    });
+    applyStageTransition(state, nextStage as TeamStage);
 
     // Update members based on new stage
-    const stageAgents = getAgentsForStage(nextStage as TeamStage);
-    state.members = stageAgents.slice(0, 3).map((agent, i) => ({
-      name: `${agent}-${i + 1}`,
-      role: agent,
-      agentType: agent,
-      status: 'idle' as const
-    }));
+    state.members = buildMembersForStage(nextStage as TeamStage);
 
     await writeState('team', state, cwd, stateOptions);
 

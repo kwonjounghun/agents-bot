@@ -109,3 +109,29 @@ export function isActiveStatus(status: AgentStatus): boolean {
 export function shouldAnimate(status: AgentStatus): boolean {
   return status !== 'idle' && status !== 'complete';
 }
+
+/**
+ * Get Tailwind classes for a team-level status badge (bg + border + text)
+ */
+export function getTeamStatusStyle(status: string): string {
+  switch (status) {
+    case 'active': return 'bg-green-900/30 border-green-700/50 text-green-400';
+    case 'complete': return 'bg-blue-900/30 border-blue-700/50 text-blue-400';
+    default: return 'bg-slate-700/30 border-slate-600/50 text-slate-400';
+  }
+}
+
+/**
+ * Get Tailwind border+shadow classes for agent panel based on status
+ */
+export function getPanelBorderClass(status: AgentStatus): string {
+  switch (status) {
+    case 'thinking': return 'border-yellow-500/50 shadow-yellow-500/20';
+    case 'responding': return 'border-green-500/50 shadow-green-500/20';
+    case 'using_tool': return 'border-blue-500/50 shadow-blue-500/20';
+    case 'complete': return 'border-emerald-500/50';
+    case 'error': return 'border-red-500/50';
+    case 'stopped': return 'border-orange-500/50 shadow-orange-500/20';
+    default: return 'border-slate-600/50';
+  }
+}

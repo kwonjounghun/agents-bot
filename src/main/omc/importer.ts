@@ -153,6 +153,20 @@ export function detectOMCInstallation(): OMCInstallation {
 }
 
 /**
+ * Load a single OMC module and extract named exports into a target object.
+ * Returns the raw module or null if the file doesn't exist.
+ */
+async function loadSingleModule(
+  filePath: string,
+  logName: string
+): Promise<Record<string, unknown> | null> {
+  if (!existsSync(filePath)) return null;
+  const mod = await import(pathToFileURL(filePath).href);
+  console.log(`[OMCImporter] Loaded ${logName} module`);
+  return mod as Record<string, unknown>;
+}
+
+/**
  * Load OMC modules dynamically
  *
  * Uses dynamic import to load ES modules from OMC's dist folder.
@@ -179,41 +193,27 @@ export async function loadOMCModules(): Promise<OMCModules | null> {
 
   try {
     // Load keyword detector
-    const keywordDetectorPath = join(installation.distPath, 'hooks/keyword-detector/index.js');
-    if (existsSync(keywordDetectorPath)) {
-      const keywordModule = await import(pathToFileURL(keywordDetectorPath).href);
+    const keywordModule = await loadSingleModule(
+      join(installation.distPath, 'hooks/keyword-detector/index.js'),
+      'keyword detector'
+    );
+    if (keywordModule) {
       modules._raw.keywordDetector = keywordModule;
-
-      if (keywordModule.detectKeywordsWithType) {
-        modules.detectKeywordsWithType = keywordModule.detectKeywordsWithType;
-      }
-      if (keywordModule.extractPromptText) {
-        modules.extractPromptText = keywordModule.extractPromptText;
-      }
-      if (keywordModule.removeCodeBlocks) {
-        modules.removeCodeBlocks = keywordModule.removeCodeBlocks;
-      }
-      if (keywordModule.sanitizeForKeywordDetection) {
-        modules.sanitizeForKeywordDetection = keywordModule.sanitizeForKeywordDetection;
-      }
-
-      console.log('[OMCImporter] Loaded keyword detector module');
+      if (keywordModule.detectKeywordsWithType) modules.detectKeywordsWithType = keywordModule.detectKeywordsWithType as typeof modules.detectKeywordsWithType;
+      if (keywordModule.extractPromptText) modules.extractPromptText = keywordModule.extractPromptText as typeof modules.extractPromptText;
+      if (keywordModule.removeCodeBlocks) modules.removeCodeBlocks = keywordModule.removeCodeBlocks as typeof modules.removeCodeBlocks;
+      if (keywordModule.sanitizeForKeywordDetection) modules.sanitizeForKeywordDetection = keywordModule.sanitizeForKeywordDetection as typeof modules.sanitizeForKeywordDetection;
     }
 
     // Load builtin skills module
-    const skillsPath = join(installation.distPath, 'features/builtin-skills/skills.js');
-    if (existsSync(skillsPath)) {
-      const skillsModule = await import(pathToFileURL(skillsPath).href);
+    const skillsModule = await loadSingleModule(
+      join(installation.distPath, 'features/builtin-skills/skills.js'),
+      'skills'
+    );
+    if (skillsModule) {
       modules._raw.skillsModule = skillsModule;
-
-      if (skillsModule.loadBuiltinSkills) {
-        modules.loadBuiltinSkills = skillsModule.loadBuiltinSkills;
-      }
-      if (skillsModule.parseSkillFile) {
-        modules.parseSkillFile = skillsModule.parseSkillFile;
-      }
-
-      console.log('[OMCImporter] Loaded skills module');
+      if (skillsModule.loadBuiltinSkills) modules.loadBuiltinSkills = skillsModule.loadBuiltinSkills as typeof modules.loadBuiltinSkills;
+      if (skillsModule.parseSkillFile) modules.parseSkillFile = skillsModule.parseSkillFile as typeof modules.parseSkillFile;
     }
 
     // Load state manager (try multiple possible paths)
@@ -224,49 +224,36 @@ export async function loadOMCModules(): Promise<OMCModules | null> {
     ];
 
     for (const statePath of stateManagerPaths) {
-      if (existsSync(statePath)) {
-        const stateModule = await import(pathToFileURL(statePath).href);
+      const stateModule = await loadSingleModule(statePath, `state manager from: ${statePath}`);
+      if (stateModule) {
         modules._raw.stateModule = stateModule;
-
-        if (stateModule.readState) {
-          modules.readState = stateModule.readState;
-        }
-        if (stateModule.writeState) {
-          modules.writeState = stateModule.writeState;
-        }
-        if (stateModule.clearState) {
-          modules.clearState = stateModule.clearState;
-        }
-        if (stateModule.listActiveModes) {
-          modules.listActiveModes = stateModule.listActiveModes;
-        }
-
-        console.log('[OMCImporter] Loaded state manager from:', statePath);
+        if (stateModule.readState) modules.readState = stateModule.readState as typeof modules.readState;
+        if (stateModule.writeState) modules.writeState = stateModule.writeState as typeof modules.writeState;
+        if (stateModule.clearState) modules.clearState = stateModule.clearState as typeof modules.clearState;
+        if (stateModule.listActiveModes) modules.listActiveModes = stateModule.listActiveModes as typeof modules.listActiveModes;
         break;
       }
     }
 
     // Load main OMC session creator
-    const mainModulePath = join(installation.distPath, 'index.js');
-    if (existsSync(mainModulePath)) {
-      const sessionModule = await import(pathToFileURL(mainModulePath).href);
+    const sessionModule = await loadSingleModule(
+      join(installation.distPath, 'index.js'),
+      'main'
+    );
+    if (sessionModule) {
       modules._raw.sessionModule = sessionModule;
-
-      if (sessionModule.createOmcSession) {
-        modules.createOmcSession = sessionModule.createOmcSession;
-        console.log('[OMCImporter] Loaded createOmcSession');
-      }
+      if (sessionModule.createOmcSession) modules.createOmcSession = sessionModule.createOmcSession as typeof modules.createOmcSession;
     }
 
     // Load agent definitions
-    const agentsPath = join(installation.distPath, 'agents/definitions.js');
-    if (existsSync(agentsPath)) {
-      const agentsModule = await import(pathToFileURL(agentsPath).href);
+    const agentsModule = await loadSingleModule(
+      join(installation.distPath, 'agents/definitions.js'),
+      'agent definitions'
+    );
+    if (agentsModule) {
       modules._raw.agentsModule = agentsModule;
-
       // Agent definitions might be default export or named export
-      modules.agentDefinitions = agentsModule.default || agentsModule.agents || agentsModule;
-      console.log('[OMCImporter] Loaded agent definitions');
+      modules.agentDefinitions = (agentsModule.default || agentsModule.agents || agentsModule) as typeof modules.agentDefinitions;
     }
 
     console.log('[OMCImporter] Successfully loaded OMC modules');

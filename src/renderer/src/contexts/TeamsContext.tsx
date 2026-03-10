@@ -166,14 +166,7 @@ function teamsReducer(state: TeamsState, action: TeamsAction): TeamsState {
   }
 }
 
-export function TeamsProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(teamsReducer, {
-    teams: new Map(),
-    activeTeamId: null,
-    isLoading: true,
-  });
-
-  // Subscribe to IPC events
+function useTeamIPC(dispatch: React.Dispatch<TeamsAction>): void {
   useEffect(() => {
     const unsubInit = window.teamAPI?.onInit(({ teams, activeTeamId }) => {
       dispatch({ type: 'INIT', teams, activeTeamId });
@@ -239,7 +232,18 @@ export function TeamsProvider({ children }: { children: ReactNode }) {
       unsubMessageUpdate?.();
       unsubAllCleared?.();
     };
-  }, []);
+  }, [dispatch]);
+}
+
+export function TeamsProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(teamsReducer, {
+    teams: new Map(),
+    activeTeamId: null,
+    isLoading: true,
+  });
+
+  // Subscribe to IPC events
+  useTeamIPC(dispatch);
 
   // Actions
   const createTeam = useCallback(async (workingDirectory: string) => {

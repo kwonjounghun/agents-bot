@@ -7,6 +7,69 @@
 import { Tray, Menu, dialog, nativeImage, app } from 'electron';
 import { join } from 'path';
 
+// ─── Tray icon rendering helpers ────────────────────────────────────────────
+
+interface TrayGeometry {
+  centerX: number;
+  centerY: number;
+  radius: number;
+  leftEyeX: number;
+  rightEyeX: number;
+  eyeY: number;
+  eyeRadius: number;
+}
+
+/** Pure: compute icon geometry constants from icon size */
+function computeTrayGeometry(size: number): TrayGeometry {
+  const centerX = size / 2;
+  const centerY = size / 2;
+  return {
+    centerX,
+    centerY,
+    radius: 8,
+    leftEyeX: centerX - 3,
+    rightEyeX: centerX + 3,
+    eyeY: centerY - 1,
+    eyeRadius: 1.5
+  };
+}
+
+/** Pure: render robot-face pixels into a new RGBA buffer */
+function renderTrayPixels(size: number, g: TrayGeometry): Buffer {
+  const canvas = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = (y * size + x) * 4;
+      const dist = Math.sqrt((x - g.centerX) ** 2 + (y - g.centerY) ** 2);
+      const leftEyeDist = Math.sqrt((x - g.leftEyeX) ** 2 + (y - g.eyeY) ** 2);
+      const rightEyeDist = Math.sqrt((x - g.rightEyeX) ** 2 + (y - g.eyeY) ** 2);
+      const isAntenna = x >= g.centerX - 1 && x <= g.centerX + 1 && y >= 1 && y <= 4;
+      const isAntennaTop = Math.sqrt((x - g.centerX) ** 2 + (y - 1) ** 2) <= 2;
+
+      canvas[idx] = 0; canvas[idx + 1] = 0; canvas[idx + 2] = 0;
+      if (dist >= g.radius - 1.5 && dist <= g.radius) {
+        canvas[idx + 3] = 255;
+      } else if (leftEyeDist <= g.eyeRadius || rightEyeDist <= g.eyeRadius) {
+        canvas[idx + 3] = 255;
+      } else if (isAntenna || isAntennaTop) {
+        canvas[idx + 3] = 200;
+      } else {
+        canvas[idx + 3] = 0;
+      }
+    }
+  }
+  return canvas;
+}
+
+/** Pure: build a macOS template NativeImage from an RGBA buffer */
+function buildNativeImage(canvas: Buffer, size: number): Electron.NativeImage {
+  const image = nativeImage.createFromBuffer(canvas, { width: size, height: size });
+  image.setTemplateImage(true);
+  return image;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 export interface TrayCallbacks {
   onCallLeader: (workingDirectory: string) => void;
   onQuit: () => void;
@@ -54,81 +117,10 @@ export class TrayManager {
    * Create tray icon - fallback to programmatic icon if file doesn't exist
    */
   private createTrayIcon(_iconPath: string): Electron.NativeImage {
-    // Create a simple 22x22 template icon for macOS menu bar
-    // Template images should be black with transparency
     const size = 22;
-    const canvas = Buffer.alloc(size * size * 4);
-
-    // Draw a simple robot face icon
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const idx = (y * size + x) * 4;
-
-        // Create a circular robot head
-        const centerX = size / 2;
-        const centerY = size / 2;
-        const radius = 8;
-        const dist = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2);
-
-        // Eyes positions
-        const leftEyeX = centerX - 3;
-        const rightEyeX = centerX + 3;
-        const eyeY = centerY - 1;
-        const eyeRadius = 1.5;
-
-        const leftEyeDist = Math.sqrt((x - leftEyeX) ** 2 + (y - eyeY) ** 2);
-        const rightEyeDist = Math.sqrt((x - rightEyeX) ** 2 + (y - eyeY) ** 2);
-
-        // Antenna
-        const isAntenna = x >= centerX - 1 && x <= centerX + 1 && y >= 1 && y <= 4;
-        const isAntennaTop = Math.sqrt((x - centerX) ** 2 + (y - 1) ** 2) <= 2;
-
-        if (dist <= radius || isAntenna || isAntennaTop) {
-          // Head outline or antenna
-          if (dist >= radius - 1.5 && dist <= radius) {
-            // Outer ring
-            canvas[idx] = 0;     // R
-            canvas[idx + 1] = 0; // G
-            canvas[idx + 2] = 0; // B
-            canvas[idx + 3] = 255; // A
-          } else if (leftEyeDist <= eyeRadius || rightEyeDist <= eyeRadius) {
-            // Eyes
-            canvas[idx] = 0;
-            canvas[idx + 1] = 0;
-            canvas[idx + 2] = 0;
-            canvas[idx + 3] = 255;
-          } else if (isAntenna || isAntennaTop) {
-            // Antenna
-            canvas[idx] = 0;
-            canvas[idx + 1] = 0;
-            canvas[idx + 2] = 0;
-            canvas[idx + 3] = 200;
-          } else {
-            // Transparent inside
-            canvas[idx] = 0;
-            canvas[idx + 1] = 0;
-            canvas[idx + 2] = 0;
-            canvas[idx + 3] = 0;
-          }
-        } else {
-          // Transparent outside
-          canvas[idx] = 0;
-          canvas[idx + 1] = 0;
-          canvas[idx + 2] = 0;
-          canvas[idx + 3] = 0;
-        }
-      }
-    }
-
-    const image = nativeImage.createFromBuffer(canvas, {
-      width: size,
-      height: size
-    });
-
-    // Set as template image for macOS (adapts to light/dark mode)
-    image.setTemplateImage(true);
-
-    return image;
+    const geometry = computeTrayGeometry(size);
+    const canvas = renderTrayPixels(size, geometry);
+    return buildNativeImage(canvas, size);
   }
 
   /**

@@ -8,7 +8,7 @@ import React, { useRef, useEffect, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Agent } from '../../contexts/TeamsContext';
 import { getAgentConfig } from '../../../../shared/agentTypes';
-import { isActiveStatus, getStatusText } from '../../utils/statusHelpers';
+import { isActiveStatus, getStatusText, getPanelBorderClass } from '../../utils/statusHelpers';
 import { MessageBubble } from '../../components/MessageBubble';
 
 interface AgentPanelProps {
@@ -25,18 +25,6 @@ export const AgentPanel = memo(function AgentPanel({ agent }: AgentPanelProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messageCount]);
 
-  const getStatusColor = () => {
-    switch (agent.status) {
-      case 'thinking': return 'border-yellow-500/50 shadow-yellow-500/20';
-      case 'responding': return 'border-green-500/50 shadow-green-500/20';
-      case 'using_tool': return 'border-blue-500/50 shadow-blue-500/20';
-      case 'complete': return 'border-emerald-500/50';
-      case 'error': return 'border-red-500/50';
-      case 'stopped': return 'border-orange-500/50 shadow-orange-500/20';
-      default: return 'border-slate-600/50';
-    }
-  };
-
   const isActive = isActiveStatus(agent.status);
 
   return (
@@ -46,7 +34,7 @@ export const AgentPanel = memo(function AgentPanel({ agent }: AgentPanelProps) {
       className={`
         flex flex-col bg-slate-800 rounded-lg overflow-hidden
         border-2 transition-all duration-300
-        ${getStatusColor()}
+        ${getPanelBorderClass(agent.status)}
         ${isActive ? 'shadow-lg' : ''}
       `}
     >

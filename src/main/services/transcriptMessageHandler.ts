@@ -90,30 +90,23 @@ export function createTranscriptMessageHandler(
   }
 
   /**
-   * Filter messages that should not be processed
+   * Register a tool_use event for later tool_result correlation (side effect)
+   */
+  function registerToolUse(toolUseId: string, toolName: string): void {
+    toolUseRegistry.set(toolUseId, toolName);
+  }
+
+  /**
+   * Pure predicate — returns true if the message should be skipped.
+   * Has no side effects; call registerToolUse separately before this.
    */
   function shouldSkipMessage(message: TranscriptMessage): boolean {
-    // Skip messages without agentId
-    if (!message.agentId) {
-      return true;
-    }
+    if (!message.agentId) return true;
+    if (message.type === 'tool_use') return true;
 
-    // Register tool_use for later tool_result correlation
-    if (message.type === 'tool_use' && message.toolUseId && message.toolName) {
-      toolUseRegistry.set(message.toolUseId, message.toolName);
-      // Skip tool_use messages (don't display them)
-      return true;
-    }
-
-    // For tool_result, only show Task tool results
     if (message.type === 'tool_result') {
       const toolName = message.toolUseId ? toolUseRegistry.get(message.toolUseId) : null;
-      // Only allow Task tool results
-      if (toolName !== 'Task') {
-        return true;
-      }
-      // Task tool_result - allow it through
-      return false;
+      return toolName !== 'Task';
     }
 
     return false;
@@ -207,7 +200,12 @@ export function createTranscriptMessageHandler(
         contentPreview: message.content?.substring(0, 50)
       });
 
-      // Filter unwanted messages
+      // Register tool_use for later tool_result correlation (side effect before pure check)
+      if (message.type === 'tool_use' && message.toolUseId && message.toolName) {
+        registerToolUse(message.toolUseId, message.toolName);
+      }
+
+      // Filter unwanted messages (pure predicate, no side effects)
       if (shouldSkipMessage(message)) {
         console.log('[TranscriptMessageHandler] Skipped message type:', message.type);
         return;

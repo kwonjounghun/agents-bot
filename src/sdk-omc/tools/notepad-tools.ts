@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ToolDefinition } from '../skills';
+import { ensureOmcDir } from './utils/fs';
 
 const NOTEPAD_FILENAME = 'notepad.md';
 
@@ -25,16 +26,6 @@ interface NotepadSections {
  */
 function getNotepadPath(workingDirectory: string): string {
   return path.join(workingDirectory, '.omc', NOTEPAD_FILENAME);
-}
-
-/**
- * Ensure .omc directory exists
- */
-function ensureOmcDir(workingDirectory: string): void {
-  const omcDir = path.join(workingDirectory, '.omc');
-  if (!fs.existsSync(omcDir)) {
-    fs.mkdirSync(omcDir, { recursive: true });
-  }
 }
 
 /**

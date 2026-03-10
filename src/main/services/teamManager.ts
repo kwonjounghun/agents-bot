@@ -70,7 +70,7 @@ export class TeamManager extends EventEmitter {
    * Create a new team
    */
   createTeam(workingDirectory: string): Team {
-    const teamId = `team-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const teamId = `team-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
     const leaderId = `leader-${teamId}`;
 
     // Create leader agent

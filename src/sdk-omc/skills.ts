@@ -52,6 +52,15 @@ import { astTools } from './tools/ast-tools';
 import { teamTools } from './tools/team-tools';
 
 /**
+ * Resolve working directory and session-scoped state options from tool context
+ */
+function resolveContext(context?: ToolContext): { cwd: string; stateOptions: { sessionId: string } | undefined } {
+  const cwd = context?.cwd || process.cwd();
+  const sessionId = context?.session_id;
+  return { cwd, stateOptions: sessionId ? { sessionId } : undefined };
+}
+
+/**
  * Autopilot Skill
  *
  * Full autonomous execution from idea to working code.
@@ -78,9 +87,7 @@ export const autopilotTool: ToolDefinition = {
   handler: async (args, context) => {
     const goal = args.goal as string;
     const maxIterations = (args.maxIterations as number) || 10;
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     // Create autopilot state
     const state = createAutopilotState(goal);
@@ -133,9 +140,7 @@ export const ralphTool: ToolDefinition = {
   handler: async (args, context) => {
     const task = args.task as string;
     const maxIterations = (args.maxIterations as number) || 20;
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     // Create ralph state
     const state = createRalphState(task, maxIterations);
@@ -184,9 +189,7 @@ export const ultraworkTool: ToolDefinition = {
   },
   handler: async (args, context) => {
     const tasks = args.tasks as string[];
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     // Create ultrawork state
     await writeState('ultrawork', {
@@ -242,9 +245,7 @@ export const teamTool: ToolDefinition = {
     const task = args.task as string;
     const agentCount = (args.agentCount as number) || 3;
     const agentType = (args.agentType as string) || 'executor';
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     // Generate team name from task
     const teamName = task
@@ -298,9 +299,7 @@ export const stateReadTool: ToolDefinition = {
   },
   handler: async (args, context) => {
     const mode = args.mode as SkillMode;
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     const state = await readState(mode, cwd, stateOptions);
 
@@ -346,9 +345,7 @@ export const stateWriteTool: ToolDefinition = {
   handler: async (args, context) => {
     const mode = args.mode as SkillMode;
     const state = args.state as ModeState;
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     await writeState(mode, state, cwd, stateOptions);
 
@@ -380,9 +377,7 @@ export const stateClearTool: ToolDefinition = {
   },
   handler: async (args, context) => {
     const mode = args.mode as SkillMode;
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     await clearState(mode, cwd, stateOptions);
 
@@ -406,9 +401,7 @@ export const listActiveModesTool: ToolDefinition = {
     properties: {}
   },
   handler: async (args, context) => {
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     const activeModes = await listActiveModes(cwd, stateOptions);
 
@@ -454,9 +447,7 @@ export const cancelModeTool: ToolDefinition = {
   },
   handler: async (args, context) => {
     const mode = args.mode as string;
-    const cwd = context?.cwd || process.cwd();
-    const sessionId = context?.session_id;
-    const stateOptions = sessionId ? { sessionId } : undefined;
+    const { cwd, stateOptions } = resolveContext(context);
 
     if (mode === 'all') {
       const activeModes = await listActiveModes(cwd, stateOptions);

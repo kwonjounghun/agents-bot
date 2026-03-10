@@ -59,6 +59,24 @@ function getPatternsForFile(file: string): Record<string, RegExp> | null {
 }
 
 /**
+ * Scan all symbol matches across lines using the given patterns.
+ * Shared by lsp_goto_definition and lsp_document_symbols.
+ */
+function scanAllSymbols(lines: string[], patterns: Record<string, RegExp>): Array<{ name: string; kind: string; line: number; character: number }> {
+  const results: Array<{ name: string; kind: string; line: number; character: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    for (const [kind, pattern] of Object.entries(patterns)) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(lines[i])) !== null) {
+        results.push({ name: match[1], kind, line: i + 1, character: match.index });
+      }
+    }
+  }
+  return results;
+}
+
+/**
  * Find symbol at position
  */
 function findSymbolAtPosition(content: string, line: number, character: number): string | null {
@@ -199,28 +217,23 @@ export const lspGotoDefinitionTool: ToolDefinition = {
     }
 
     const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      for (const [kind, pattern] of Object.entries(patterns)) {
-        pattern.lastIndex = 0;
-        let match;
-        while ((match = pattern.exec(lines[i])) !== null) {
-          if (match[1] === symbol) {
-            return {
-              content: [{
-                type: 'text',
-                text: `**Definition Found**
-**Symbol**: ${symbol}
-**Kind**: ${kind}
-**Location**: ${file}:${i + 1}:${match.index}
-**Line**: ${lines[i].trim()}`
-              }]
-            };
-          }
-        }
-      }
+    const allSymbols = scanAllSymbols(lines, patterns);
+    const definition = allSymbols.find(s => s.name === symbol);
+
+    if (!definition) {
+      return { content: [{ type: 'text', text: `Definition not found for: ${symbol}` }] };
     }
 
-    return { content: [{ type: 'text', text: `Definition not found for: ${symbol}` }] };
+    return {
+      content: [{
+        type: 'text',
+        text: `**Definition Found**
+**Symbol**: ${symbol}
+**Kind**: ${definition.kind}
+**Location**: ${file}:${definition.line}:${definition.character}
+**Line**: ${lines[definition.line - 1].trim()}`
+      }]
+    };
   }
 };
 
@@ -317,24 +330,8 @@ export const lspDocumentSymbolsTool: ToolDefinition = {
       return { content: [{ type: 'text', text: `Unsupported file type: ${getExtension(file)}` }] };
     }
 
-    const symbols: SymbolInfo[] = [];
     const lines = content.split('\n');
-
-    for (let i = 0; i < lines.length; i++) {
-      for (const [kind, pattern] of Object.entries(patterns)) {
-        pattern.lastIndex = 0;
-        let match;
-        while ((match = pattern.exec(lines[i])) !== null) {
-          symbols.push({
-            name: match[1],
-            kind,
-            line: i + 1,
-            character: match.index,
-            file
-          });
-        }
-      }
-    }
+    const symbols: SymbolInfo[] = scanAllSymbols(lines, patterns).map(s => ({ ...s, file }));
 
     if (symbols.length === 0) {
       return { content: [{ type: 'text', text: 'No symbols found in file' }] };

@@ -85,6 +85,10 @@ interface TeamInitEvent {
   activeTeamId: string | null;
 }
 
+// Shared IPC helpers
+const selectDirectory = (): Promise<string | null> =>
+  ipcRenderer.invoke('dialog:select-directory');
+
 // Expose Claude API to renderer (legacy, for backward compatibility)
 contextBridge.exposeInMainWorld('claudeAPI', {
   // Send prompt to Claude
@@ -103,9 +107,7 @@ contextBridge.exposeInMainWorld('claudeAPI', {
   },
 
   // Directory selection
-  selectDirectory: (): Promise<string | null> => {
-    return ipcRenderer.invoke('dialog:select-directory');
-  },
+  selectDirectory,
 
   getWorkingDirectory: (): Promise<string | null> => {
     return ipcRenderer.invoke('get-working-directory');
@@ -201,10 +203,8 @@ contextBridge.exposeInMainWorld('teamAPI', {
     return ipcRenderer.invoke('team:get-count');
   },
 
-  // Select directory (reuse from claudeAPI)
-  selectDirectory: (): Promise<string | null> => {
-    return ipcRenderer.invoke('dialog:select-directory');
-  },
+  // Select directory (shared implementation)
+  selectDirectory,
 
   // === Event Listeners ===
 
