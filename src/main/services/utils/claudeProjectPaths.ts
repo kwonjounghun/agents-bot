@@ -78,11 +78,15 @@ export async function findLatestSessionDir(projectDir: string): Promise<string |
       sessionDirs.map(async (dir) => {
         const dirPath = join(projectDir, dir.name);
         const stats = await stat(dirPath);
-        return { name: dir.name, mtime: stats.mtime };
+        // Use birthtime (creation time) instead of mtime (modification time).
+        // mtime updates whenever files inside are written, so an active older
+        // session can appear "newer" than a just-created session for another team.
+        // birthtime never changes after creation — reliable for ordering sessions.
+        return { name: dir.name, birthtime: stats.birthtime };
       })
     );
 
-    dirStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+    dirStats.sort((a, b) => b.birthtime.getTime() - a.birthtime.getTime());
 
     return dirStats[0]?.name || null;
   } catch {
@@ -124,5 +128,65 @@ export async function getSessionDir(workingDirectory: string): Promise<string | 
   }
 
   return join(projectDir, sessionId);
+}
+
+/**
+ * Search ALL session directories for a JSONL file whose name matches agentId.
+ *
+ * File naming: agent-a{hash}.jsonl
+ * SDK agentId: full long hash (e.g. "aa6b472238f7dc475")
+ * Match: sdkId.includes(fileHash) where fileHash is extracted from filename
+ *
+ * This is the correct way to find a sub-agent's transcript file in a
+ * multi-team setup — no need to know the session directory in advance.
+ *
+ * @param workingDirectory - Absolute path to the working directory
+ * @param agentId - SDK agentId to search for
+ * @returns Full path to the matching JSONL file, or null if not found yet
+ */
+export async function findAgentTranscriptFile(
+  workingDirectory: string,
+  agentId: string
+): Promise<string | null> {
+  if (!agentId) return null;
+
+  const projectDir = getProjectDir(workingDirectory);
+
+  let entries;
+  try {
+    entries = await readdir(projectDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const sessionDirs = entries
+    .filter((e) => e.isDirectory() && UUID_PATTERN.test(e.name))
+    .map((e) => join(projectDir, e.name, 'subagents'));
+
+  for (const subagentsDir of sessionDirs) {
+    let files: string[];
+    try {
+      files = await readdir(subagentsDir);
+    } catch {
+      continue; // subagents dir may not exist yet
+    }
+
+    for (const file of files) {
+      if (!file.startsWith('agent-a') || !file.endsWith('.jsonl') || file.includes('compact')) {
+        continue;
+      }
+      // Extract hash from filename: agent-a{hash}.jsonl -> {hash}
+      const match = file.match(/^agent-a([a-f0-9]+)\.jsonl$/i);
+      if (!match) continue;
+
+      const fileHash = match[1]; // e.g. "a6b4722"
+      // Match: does the SDK agentId contain this hash?
+      if (agentId.includes(fileHash) || fileHash.includes(agentId.substring(0, 7))) {
+        return join(subagentsDir, file);
+      }
+    }
+  }
+
+  return null;
 }
 

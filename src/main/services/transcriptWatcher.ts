@@ -62,7 +62,7 @@ import { open, stat, readdir } from 'fs/promises';
 import { join } from 'path';
 import type { FileHandle } from 'fs/promises';
 import { parseTranscriptLine, type TranscriptMessage } from './parsers/transcriptLineParser';
-import { getSubagentsDir } from './utils/claudeProjectPaths';
+import { findAgentTranscriptFile } from './utils/claudeProjectPaths';
 import {
   extractAgentIdFromFilePath,
   findMatchingAgentId,
@@ -134,10 +134,16 @@ export class TranscriptWatcher {
   private readonly POLL_INTERVAL_MS = 500;
   private readonly DIR_SCAN_INTERVAL_MS = 5000; // Scan for new files every 5s
 
-  // Cached subagents directory
+  // Cached subagents directory (fallback only)
   private subagentsDir: string | null = null;
   // Track active (not stopped) agents
   private activeAgents: Set<string> = new Set();
+  // Agents whose JSONL file has not been found yet — searched each poll cycle
+  private pendingAgents: Set<string> = new Set();
+  // Direct mapping: transcriptAgentId (short hash) -> SDK agentId
+  private transcriptIdMap: Map<string, string> = new Map();
+  // Direct mapping: filePath -> SDK agentId
+  private fileAgentMap: Map<string, string> = new Map();
   // Cached file list to avoid readdir on every poll
   private cachedFiles: Set<string> = new Set();
   private lastDirScan: number = 0;
@@ -149,63 +155,62 @@ export class TranscriptWatcher {
 
   /**
    * Start watching for a specific agent's transcript
-   * The agent's messages will be identified by agentId in the JSONL content
+   *
+   * @param agentId - SDK agentId (long UUID/hash from agentStart event)
+   * @param transcriptAgentId - Short hash from transcript path (e.g., "a1b2c3d")
+   * @param transcriptFilePath - Full path to the agent's JSONL file (most reliable).
+   *                             When provided, the file is watched directly —
+   *                             no directory scanning, no ID matching needed.
    */
-  async startWatching(agentId: string): Promise<boolean> {
-    // 디버깅: agentId 형식 분석
+  async startWatching(agentId: string, transcriptAgentId?: string, transcriptFilePath?: string): Promise<boolean> {
     console.log('[TranscriptWatcher] ========== START WATCHING ==========');
     console.log('[TranscriptWatcher] agentId:', agentId);
-    console.log('[TranscriptWatcher] agentId length:', agentId.length);
-    console.log('[TranscriptWatcher] agentId first 7 chars:', agentId.substring(0, 7));
+    console.log('[TranscriptWatcher] transcriptFilePath:', transcriptFilePath || '(none)');
     console.log('[TranscriptWatcher] Current activeAgents:', Array.from(this.activeAgents));
-    console.log('[TranscriptWatcher] Current fileStates count:', this.fileStates.size);
     console.log('[TranscriptWatcher] ====================================');
 
-    // Mark this agent as active
-    this.activeAgents.add(agentId);
-
-    // =========================================================================
-    // CRITICAL: 캐시 초기화 - 이 블록을 절대 삭제하거나 수정하지 마세요!
-    // =========================================================================
-    // 이 초기화가 없으면 서브에이전트 메시지가 UI에 표시되지 않습니다.
-    // 자세한 설명은 파일 상단의 "CRITICAL: 캐시 초기화 관련" 주석 참조.
-    //
-    // 문제 증상:
-    // - "NEW CONTENT DETECTED" 로그가 안 나옴
-    // - 파일은 찾지만 콘텐츠가 안 읽힘
-    // - 이전 세션 디렉토리를 계속 스캔함
-    //
-    // 해결: 아래 3줄이 반드시 필요합니다.
-    // =========================================================================
-
-    // (1) 디렉토리 재스캔 강제 - 5초 대기 없이 즉시 새 파일 발견
-    this.lastDirScan = 0;
-
-    // (2) 세션 디렉토리 캐시 리셋 - 새 세션의 subagents 폴더 경로 갱신
-    this.subagentsDir = null;
-
-    // (3) 파일 목록 캐시 클리어 - 이전 세션 파일 참조 제거
-    this.cachedFiles.clear();
-
-    // (4) fileStates는 클리어하지 않음 - 동일 세션 내 다른 에이전트 상태 유지 필요
-    // this.fileStates.clear(); // 이것은 하면 안 됨!
-
-    console.log('[TranscriptWatcher] Forcing directory rescan for new agent (cache cleared)');
-
-    // Get subagents directory (always refresh to get latest session)
-    if (!this.subagentsDir) {
-      this.subagentsDir = await getSubagentsDir(this.workingDirectory);
-      if (!this.subagentsDir) {
-        console.log('[TranscriptWatcher] Could not find subagents directory');
-        return false;
-      }
-      console.log('[TranscriptWatcher] Subagents directory:', this.subagentsDir);
+    if (!agentId) {
+      console.log('[TranscriptWatcher] Skipping — no agentId provided');
+      return false;
     }
 
-    // Start polling all files
-    this.startPolling();
+    this.activeAgents.add(agentId);
 
+    if (transcriptFilePath) {
+      // SDK provided the exact path — register directly, no searching needed
+      this.fileAgentMap.set(transcriptFilePath, agentId);
+      this.cachedFiles.add(transcriptFilePath);
+      console.log('[TranscriptWatcher] Direct file registered:', transcriptFilePath);
+    } else {
+      // SDK did not provide path — search all session dirs by agent ID each poll cycle
+      // This avoids all getSubagentsDir timing/session-contamination issues
+      this.pendingAgents.add(agentId);
+      if (transcriptAgentId) {
+        this.transcriptIdMap.set(transcriptAgentId, agentId);
+      }
+      console.log('[TranscriptWatcher] Agent queued for file search:', agentId);
+    }
+
+    this.startPolling();
     return true;
+  }
+
+  /**
+   * Search all session directories for JSONL files matching pending agents.
+   * Called once per poll cycle. Moves found agents from pendingAgents -> fileAgentMap.
+   */
+  private async resolvePendingAgents(): Promise<void> {
+    if (this.pendingAgents.size === 0) return;
+
+    for (const agentId of this.pendingAgents) {
+      const filePath = await findAgentTranscriptFile(this.workingDirectory, agentId);
+      if (filePath) {
+        this.fileAgentMap.set(filePath, agentId);
+        this.cachedFiles.add(filePath);
+        this.pendingAgents.delete(agentId);
+        console.log('[TranscriptWatcher] Resolved file for agent', agentId, '->', filePath);
+      }
+    }
   }
 
   /**
@@ -213,6 +218,16 @@ export class TranscriptWatcher {
    */
   stopWatching(agentId: string): void {
     this.activeAgents.delete(agentId);
+    this.pendingAgents.delete(agentId);
+    for (const [transcriptId, sdkId] of this.transcriptIdMap) {
+      if (sdkId === agentId) this.transcriptIdMap.delete(transcriptId);
+    }
+    for (const [filePath, sdkId] of this.fileAgentMap) {
+      if (sdkId === agentId) {
+        this.fileAgentMap.delete(filePath);
+        this.cachedFiles.delete(filePath);
+      }
+    }
     console.log('[TranscriptWatcher] Stopped watching agentId:', agentId);
 
     // Stop polling if no more active agents
@@ -228,7 +243,11 @@ export class TranscriptWatcher {
    */
   stopAll(): void {
     this.activeAgents.clear();
+    this.pendingAgents.clear();
+    this.transcriptIdMap.clear();
+    this.fileAgentMap.clear();
     this.fileStates.clear();
+    this.cachedFiles.clear();
     this.subagentsDir = null;
 
     if (this.pollInterval) {
@@ -259,15 +278,19 @@ export class TranscriptWatcher {
    * Optimized: only re-scan directory periodically, not on every poll
    */
   private async pollAllFiles(): Promise<void> {
-    if (!this.subagentsDir) {
-      console.log('[TranscriptWatcher] pollAllFiles: no subagentsDir');
+    // Resolve pending agents first (search all session dirs by agent ID)
+    await this.resolvePendingAgents();
+
+    // Allow polling if we have directly registered files, pending agents being resolved,
+    // or a subagentsDir fallback
+    if (!this.subagentsDir && this.cachedFiles.size === 0) {
       return;
     }
 
     const now = Date.now();
 
-    // Only re-scan directory periodically to find new files
-    if (now - this.lastDirScan > this.DIR_SCAN_INTERVAL_MS) {
+    // Only re-scan directory periodically to find new files (only when using directory-scan fallback)
+    if (this.subagentsDir && now - this.lastDirScan > this.DIR_SCAN_INTERVAL_MS) {
       console.log('[TranscriptWatcher] Scanning directory:', this.subagentsDir);
       const files = await getAgentFiles(this.subagentsDir);
       console.log('[TranscriptWatcher] Found files:', files.map(f => f.file));
@@ -375,8 +398,18 @@ export class TranscriptWatcher {
           // 유효한 agentId 결정 (JSONL > 파일경로 우선순위)
           const effectiveAgentId = resolveEffectiveAgentId(message.agentId, fileAgentId);
 
-          // 매칭되는 SDK agentId 찾기 (중앙 집중화된 매칭 로직 사용)
-          const matchedSdkId = findMatchingAgentId(this.activeAgents, effectiveAgentId);
+          // 1. Direct file-path lookup (most reliable — set when transcriptFilePath is known)
+          let matchedSdkId = this.fileAgentMap.get(filePath) || null;
+
+          // 2. Direct transcript ID map lookup
+          if (!matchedSdkId) {
+            matchedSdkId = this.transcriptIdMap.get(effectiveAgentId) || null;
+          }
+
+          // 3. Fallback: fuzzy matching between SDK ID formats
+          if (!matchedSdkId) {
+            matchedSdkId = findMatchingAgentId(this.activeAgents, effectiveAgentId);
+          }
 
           // 디버그 로깅
           logIdMatchingDebug('TranscriptWatcher', {

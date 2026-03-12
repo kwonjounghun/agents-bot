@@ -6,23 +6,17 @@
  */
 
 import { ipcMain, dialog } from 'electron';
-import type { ClaudeAgentService } from '../claudeAgentService';
 import type { TeamManager } from '../services/teamManager';
-import type { StreamRouter } from '../services/streamRouter';
-import type { TranscriptWatcher } from '../services/transcriptWatcher';
+import type { TeamServiceRegistry } from '../services/teamServiceRegistry';
 import type { AgentStatus } from '../../shared/types';
 
 /**
  * Services required by IPC handlers
  */
 export interface IPCServices {
-  claudeService: ClaudeAgentService | null;
   teamManager: TeamManager | null;
-  streamRouter: StreamRouter | null;
-  transcriptWatcher: TranscriptWatcher | null;
+  teamServiceRegistry: TeamServiceRegistry | null;
   sendToRenderer: (channel: string, data: unknown) => void;
-  resetMessageIds: () => void;
-  clearTranscriptAccumulator: () => void;
 }
 
 /**
@@ -49,7 +43,11 @@ function registerDialogHandlers(services: IPCServices): void {
 
     if (!result.canceled && result.filePaths.length > 0) {
       const selectedDir = result.filePaths[0];
-      services.transcriptWatcher?.setWorkingDirectory(selectedDir);
+      // Update working directory for the active team's transcript watcher
+      const activeTeam = services.teamManager?.getActiveTeam();
+      if (activeTeam) {
+        services.teamServiceRegistry?.get(activeTeam.id)?.transcriptWatcher?.setWorkingDirectory(selectedDir);
+      }
       return selectedDir;
     }
     return null;
@@ -63,60 +61,12 @@ function registerDialogHandlers(services: IPCServices): void {
 }
 
 /**
- * Control-related IPC handlers (prompt, stop)
+ * Control-related IPC handlers (legacy prompt/stop, kept for compatibility)
  */
 function registerControlHandlers(services: IPCServices): void {
-  // Send prompt to Claude (legacy, use team:send-command instead)
-  ipcMain.on(
-    'control:send-prompt',
-    async (_event, { prompt, workingDirectory }: { prompt: string; workingDirectory?: string }) => {
-      const activeTeam = services.teamManager?.getActiveTeam();
-      const cwd = workingDirectory || activeTeam?.workingDirectory;
-      console.log('[IPC] Sending prompt:', prompt.substring(0, 50) + '...');
-      console.log('[IPC] Working directory:', cwd);
-
-      // Reset message IDs for new conversation
-      services.resetMessageIds();
-
-      // Clear previous agent context via StreamRouter
-      if (services.streamRouter && services.streamRouter.getStackDepth() > 0) {
-        console.log('[IPC] Cleaning up previous agents via StreamRouter');
-        services.streamRouter.clear();
-      }
-
-      // Stop all transcript watchers from previous query
-      services.transcriptWatcher?.stopAll();
-
-      // Clear all transcript accumulators
-      services.clearTranscriptAccumulator();
-
-      services.sendToRenderer('agent:status', { status: 'thinking' as AgentStatus });
-
-      try {
-        await services.claudeService?.query({
-          prompt,
-          workingDirectory: cwd || undefined,
-        });
-      } catch (error) {
-        console.error('[IPC] Error sending prompt:', error);
-        services.sendToRenderer('agent:error', {
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    }
-  );
-
-  // Stop current query
-  ipcMain.on('control:stop', () => {
-    console.log('[IPC] Stopping query');
-    services.claudeService?.stop();
-    services.sendToRenderer('agent:status', { status: 'idle' as AgentStatus });
-  });
-
   // Window ready notification
   ipcMain.on('window:ready', () => {
     console.log('[IPC] Window ready');
-    // Send current teams to renderer
     if (services.teamManager) {
       services.sendToRenderer('team:init', {
         teams: services.teamManager.getSerializedTeams(),
@@ -156,6 +106,8 @@ function registerTeamHandlers(services: IPCServices): void {
   // Delete team
   ipcMain.handle('team:delete', (_event, teamId: string) => {
     console.log('[IPC] Deleting team:', teamId);
+    // Stop and clean up team services first
+    services.teamServiceRegistry?.delete(teamId);
     return services.teamManager?.deleteTeam(teamId) || false;
   });
 
@@ -181,34 +133,28 @@ function registerTeamHandlers(services: IPCServices): void {
   // Close all teams
   ipcMain.on('team:close-all', () => {
     console.log('[IPC] Closing all teams');
+    services.teamServiceRegistry?.stopAll();
     services.teamManager?.clearAll();
-    services.streamRouter?.clear();
   });
 
-  // Stop all agents (abort current query and cleanup)
-  ipcMain.on('team:stop-all-agents', (_event, teamId?: string) => {
-    console.log('[IPC] Stopping all agents', teamId ? `for team ${teamId}` : '');
+  // Stop agents for a specific team only
+  ipcMain.on('team:stop-all-agents', (_event, teamId: string) => {
+    console.log('[IPC] Stopping agents for team:', teamId);
 
-    // Abort current query
-    services.claudeService?.stop();
+    if (!teamId) {
+      console.warn('[IPC] team:stop-all-agents called without teamId — ignoring');
+      return;
+    }
 
-    // Clear agent context
-    services.streamRouter?.clear();
+    // Stop only this team's services (other teams are unaffected)
+    services.teamServiceRegistry?.stopTeam(teamId);
 
-    // Stop all transcript watchers
-    services.transcriptWatcher?.stopAll();
-
-    // Clear transcript accumulators
-    services.clearTranscriptAccumulator();
-
-    // Update team and mark sub-agents as stopped, then remove after delay
-    if (teamId && services.teamManager) {
+    // Update UI state for this team
+    if (services.teamManager) {
       const team = services.teamManager.getTeam(teamId);
       if (team) {
-        // Update leader agent status to idle
         services.teamManager.updateAgentStatus(teamId, team.leaderId, 'idle');
 
-        // Collect sub-agent IDs and mark them as stopped
         const subAgentIds: string[] = [];
         for (const agent of team.agents.values()) {
           if (!agent.isLeader) {
@@ -217,10 +163,9 @@ function registerTeamHandlers(services: IPCServices): void {
           }
         }
 
-        // Update team status
         services.teamManager.updateTeamStatus(teamId, 'idle');
 
-        // Remove sub-agents after 1 second (so user can see 'Stopped' status)
+        // Remove sub-agents after brief delay so UI shows 'stopped' state
         if (subAgentIds.length > 0) {
           setTimeout(() => {
             for (const agentId of subAgentIds) {
@@ -230,9 +175,6 @@ function registerTeamHandlers(services: IPCServices): void {
         }
       }
     }
-
-    // Notify renderer (legacy support)
-    services.sendToRenderer('agent:status', { status: 'idle' as AgentStatus });
   });
 
   // Get active team count
@@ -248,22 +190,36 @@ function registerOmcHandlers(services: IPCServices): void {
   // Get OMC installation status
   ipcMain.handle('omc:get-status', async (_event, workingDirectory?: string) => {
     const activeTeam = services.teamManager?.getActiveTeam();
+    const teamId = activeTeam?.id;
     const cwd = workingDirectory || activeTeam?.workingDirectory || process.cwd();
-    return (
-      services.claudeService?.getOMCStatus(cwd) || {
-        installed: false,
-        version: null,
-        skillCount: 0,
-        skills: [],
-        activeModes: [],
+
+    if (teamId) {
+      const svc = services.teamServiceRegistry?.get(teamId);
+      if (svc) {
+        return svc.claudeService.getOMCStatus(cwd);
       }
-    );
+    }
+
+    return {
+      installed: false,
+      version: null,
+      skillCount: 0,
+      skills: [],
+      activeModes: [],
+    };
   });
 
   // Initialize OMC
   ipcMain.handle('omc:initialize', async (_event, workingDirectory?: string) => {
     const activeTeam = services.teamManager?.getActiveTeam();
+    const teamId = activeTeam?.id;
     const cwd = workingDirectory || activeTeam?.workingDirectory || process.cwd();
-    return services.claudeService?.initOMC(cwd);
+
+    if (teamId) {
+      const svc = services.teamServiceRegistry?.get(teamId);
+      if (svc) {
+        return svc.claudeService.initOMC(cwd);
+      }
+    }
   });
 }

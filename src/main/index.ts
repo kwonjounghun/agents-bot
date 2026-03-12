@@ -1,28 +1,23 @@
 import { app, BrowserWindow } from 'electron';
-import type { ClaudeAgentService, AgentStartEvent, AgentStopEvent } from './claudeAgentService';
-import { createStreamRouter, normalizeAgentType, type StreamRouter } from './services/streamRouter';
-import { createTranscriptWatcher, type TranscriptWatcher } from './services/transcriptWatcher';
-import { createTranscriptMessageHandler, type TranscriptMessageHandler } from './services/transcriptMessageHandler';
+import type { ClaudeAgentService } from './claudeAgentService';
+import { createStreamRouter, normalizeAgentType } from './services/streamRouter';
+import { createTranscriptWatcher } from './services/transcriptWatcher';
+import { createTranscriptMessageHandler } from './services/transcriptMessageHandler';
 import { createTrayManager, type TrayManager } from './tray';
 import { createTeamManager, type TeamManager } from './services/teamManager';
 import { registerIpcHandlers } from './setup/ipcHandlers';
 import { createMainWindow } from './setup/windowFactory';
 import { setupClaudeService } from './setup/claudeServiceSetup';
+import { createTeamServiceRegistry, type TeamServiceSet } from './services/teamServiceRegistry';
 
 // Disable sandbox for macOS compatibility
 app.commandLine.appendSwitch('no-sandbox');
 
 let mainWindow: BrowserWindow | null = null;
-let claudeService: ClaudeAgentService | null = null;
 let teamManager: TeamManager | null = null;
-let streamRouter: StreamRouter | null = null;
-let transcriptWatcher: TranscriptWatcher | null = null;
-let transcriptHandler: TranscriptMessageHandler | null = null;
 let trayManager: TrayManager | null = null;
 
-// Track current message IDs for streaming accumulation
-let currentTextMessageId: string | null = null;
-let currentThinkingMessageId: string | null = null;
+const teamServiceRegistry = createTeamServiceRegistry();
 
 function sendToRenderer(channel: string, data: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -30,51 +25,104 @@ function sendToRenderer(channel: string, data: unknown): void {
   }
 }
 
+/**
+ * Create a complete, isolated service set for one team.
+ * All message routing, transcript watching, and streaming state
+ * are scoped to this team — no cross-team contamination.
+ */
+function createTeamServices(teamId: string, workingDirectory: string): TeamServiceSet {
+  const streamRouter = createStreamRouter();
+
+  const transcriptHandler = createTranscriptMessageHandler({
+    streamRouter,
+    teamManager,
+  });
+
+  const transcriptWatcher = createTranscriptWatcher(
+    {
+      onMessage: (message) => transcriptHandler.handleMessage(message),
+      onError: (error: Error, agentId: string) => {
+        console.error('[Main] Transcript error for', agentId, ':', error.message);
+      },
+    },
+    workingDirectory
+  );
+
+  // Create mutable shell first so closures always read the live messageId values
+  const svc: TeamServiceSet = {
+    streamRouter,
+    transcriptWatcher,
+    transcriptHandler,
+    textMessageId: null,
+    thinkingMessageId: null,
+    claudeService: null as unknown as ClaudeAgentService,
+  };
+
+  svc.claudeService = setupClaudeService({
+    teamId,
+    streamRouter,
+    transcriptWatcher,
+    teamManager,
+    normalizeAgentType,
+    sendToRenderer,
+    getMessageIds: () => ({ textId: svc.textMessageId, thinkingId: svc.thinkingMessageId }),
+    setMessageIds: (textId, thinkingId) => {
+      svc.textMessageId = textId;
+      svc.thinkingMessageId = thinkingId;
+    },
+    clearTranscriptAccumulator: (agentId) => transcriptHandler.clearAccumulator(agentId),
+  });
+
+  console.log('[Main] Created service set for team:', teamId);
+  return svc;
+}
+
 console.log('[Main] Waiting for app ready...');
 app.whenReady().then(async () => {
   console.log('[Main] App is ready!');
 
-  // Initialize StreamRouter
-  streamRouter = createStreamRouter();
-
-  // Initialize Team Manager (replaces LeaderAgentManager + WidgetManager)
+  // Initialize Team Manager
   teamManager = createTeamManager();
 
-  // Handle commands from team (leader)
+  // Handle commands per team — each team uses its own isolated service set
   teamManager.on('commandReceived', async ({ teamId, command, workingDirectory, shouldContinue }: { teamId: string; command: string; workingDirectory: string; shouldContinue: boolean }) => {
-    console.log('[Main] Team command received:', command.substring(0, 50), 'shouldContinue:', shouldContinue);
+    console.log('[Main] Team command received:', command.substring(0, 50), 'team:', teamId);
 
-    // Reset message IDs for new conversation
-    currentTextMessageId = null;
-    currentThinkingMessageId = null;
-
-    // Clear previous agent context via StreamRouter
-    if (streamRouter && streamRouter.getStackDepth() > 0) {
-      streamRouter.clear();
+    // Lazily create service set on first command for this team
+    if (!teamServiceRegistry.has(teamId)) {
+      const svc = createTeamServices(teamId, workingDirectory);
+      teamServiceRegistry.set(teamId, svc);
     }
 
-    // Stop all transcript watchers from previous query
-    transcriptWatcher?.stopAll();
-    transcriptHandler?.clearAllAccumulators();
+    const svc = teamServiceRegistry.get(teamId)!;
 
-    // Update transcript watcher working directory
-    transcriptWatcher?.setWorkingDirectory(workingDirectory);
+    // Reset per-query streaming state
+    svc.textMessageId = null;
+    svc.thinkingMessageId = null;
+
+    if (svc.streamRouter.getStackDepth() > 0) {
+      svc.streamRouter.clear();
+    }
+
+    svc.transcriptWatcher.stopAll();
+    svc.transcriptHandler.clearAllAccumulators();
+    svc.transcriptWatcher.setWorkingDirectory(workingDirectory);
 
     try {
-      await claudeService?.query({
+      await svc.claudeService.query({
         prompt: command,
         workingDirectory,
-        continue: shouldContinue
+        continue: shouldContinue,
       });
     } catch (error) {
       console.error('[Main] Error executing team command:', error);
-      const activeTeam = teamManager?.getActiveTeam();
-      if (activeTeam) {
-        teamManager?.updateAgentStatus(activeTeam.id, activeTeam.leaderId, 'error');
+      const team = teamManager?.getTeam(teamId);
+      if (team) {
+        teamManager?.updateAgentStatus(teamId, team.leaderId, 'error');
       }
       sendToRenderer('team:error', {
         teamId,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
@@ -84,26 +132,21 @@ app.whenReady().then(async () => {
     onCallLeader: async (workingDirectory: string) => {
       console.log('[Main] Tray: Call leader for directory:', workingDirectory);
 
-      // Update TranscriptWatcher with new working directory
-      transcriptWatcher?.setWorkingDirectory(workingDirectory);
-
-      // Create new team
       if (teamManager) {
         const team = teamManager.createTeam(workingDirectory);
         teamManager.setActiveTeam(team.id);
       }
 
-      // Show main window
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.show();
         mainWindow.focus();
       }
 
-      // Activate tray indicator
       trayManager?.setActive(true);
     },
     onQuit: () => {
       console.log('[Main] Tray: Quit requested');
+      teamServiceRegistry.stopAll();
       teamManager?.clearAll();
       trayManager?.setActive(false);
     },
@@ -116,98 +159,20 @@ app.whenReady().then(async () => {
           mainWindow.focus();
         }
       }
-    }
+    },
   });
   trayManager.initialize();
   console.log('[Main] Tray manager initialized');
 
-  // Initialize TranscriptMessageHandler
-  transcriptHandler = createTranscriptMessageHandler({
-    streamRouter: streamRouter!,
-    teamManager
-  });
-
-  // Initialize TranscriptWatcher with handler
-  const workingDir = process.cwd();
-  transcriptWatcher = createTranscriptWatcher(
-    {
-      onMessage: (message) => transcriptHandler!.handleMessage(message),
-      onError: (error: Error, agentId: string) => {
-        console.error('[Main] Transcript error for', agentId, ':', error.message);
-      }
-    },
-    workingDir
-  );
-
-  // Initialize Claude service with dependencies
-  claudeService = setupClaudeService({
-    streamRouter,
-    transcriptWatcher,
-    teamManager,
-    normalizeAgentType,
-    sendToRenderer,
-    getMessageIds: () => ({ textId: currentTextMessageId, thinkingId: currentThinkingMessageId }),
-    setMessageIds: (textId, thinkingId) => {
-      currentTextMessageId = textId;
-      currentThinkingMessageId = thinkingId;
-    },
-    clearTranscriptAccumulator: (agentId) => {
-      transcriptHandler?.clearAccumulator(agentId);
-    },
-    // Enable routing leader messages (thinking/text) to TeamManager for display in leader chat
-    routeLeaderToTeam: true,
-  });
-
-  // Forward agent events to team manager for sub-agent tracking
-  claudeService.on('agentStart', async (event: AgentStartEvent) => {
-    const activeTeam = teamManager?.getActiveTeam();
-    if (activeTeam) {
-      const normalizedRole = normalizeAgentType(event.agentType);
-      console.log('[Main] Adding sub-agent to team:', event.agentId, normalizedRole);
-
-      teamManager?.addAgent(activeTeam.id, {
-        id: event.agentId,
-        role: normalizedRole,
-        isLeader: false,
-        parentToolUseId: event.toolUseId,
-        status: 'thinking',
-      });
-    }
-  });
-
-  claudeService.on('agentStop', (event: AgentStopEvent) => {
-    const team = teamManager?.findTeamByAgentId(event.agentId);
-    if (team) {
-      // Update sub-agent status to complete
-      teamManager?.updateAgentStatus(team.id, event.agentId, 'complete');
-
-      // Remove sub-agent after delay
-      setTimeout(() => {
-        teamManager?.removeAgent(team.id, event.agentId);
-      }, 3000);
-    }
-  });
-
   // Setup IPC handlers
   registerIpcHandlers({
-    claudeService,
     teamManager,
-    streamRouter,
-    transcriptWatcher,
+    teamServiceRegistry,
     sendToRenderer,
-    resetMessageIds: () => {
-      currentTextMessageId = null;
-      currentThinkingMessageId = null;
-    },
-    clearTranscriptAccumulator: () => {
-      transcriptHandler?.clearAllAccumulators();
-    },
   });
 
   // Create the main window
   mainWindow = await createMainWindow();
-
-  // Set main window for team manager IPC
   teamManager.setMainWindow(mainWindow);
 
   // Hide instead of close on macOS
@@ -220,7 +185,7 @@ app.whenReady().then(async () => {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
-    claudeService?.stop();
+    teamServiceRegistry.stopAll();
   });
 
   // macOS specific handling
@@ -242,9 +207,7 @@ app.on('window-all-closed', () => {
 
 // Graceful shutdown
 app.on('before-quit', () => {
-  transcriptWatcher?.stopAll();
-  streamRouter?.clear();
+  teamServiceRegistry.clear();
   teamManager?.clearAll();
   trayManager?.destroy();
-  claudeService?.stop();
 });

@@ -169,9 +169,11 @@ export function createTranscriptMessageHandler(
       return;
     }
 
-    const activeTeam = teamManager.getActiveTeam();
+    // Use findTeamByAgentId instead of getActiveTeam() to avoid race conditions
+    // when the active team changes while a subagent is still running.
+    const activeTeam = teamManager.findTeamByAgentId(agentId);
     if (!activeTeam) {
-      console.log('[TranscriptMessageHandler] No activeTeam');
+      console.log('[TranscriptMessageHandler] No team found for agent:', agentId);
       return;
     }
 
