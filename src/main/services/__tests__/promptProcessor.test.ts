@@ -7,9 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseSlashCommand,
-  buildFinalPrompt,
-  buildOmcAgentContext,
-  processOMCCommand
+  buildFinalPrompt
 } from '../promptProcessor';
 
 describe('PromptProcessor', () => {
@@ -181,94 +179,4 @@ describe('PromptProcessor', () => {
     });
   });
 
-  describe('buildOmcAgentContext', () => {
-    it('should build context with suggested mode', () => {
-      // Arrange
-      const agents = {
-        executor: { description: 'Executes code changes' },
-        explorer: { description: 'Explores codebase' }
-      };
-      const suggestedMode = 'autopilot';
-
-      // Act
-      const result = buildOmcAgentContext(agents, suggestedMode);
-
-      // Assert
-      expect(result).toContain('[SDK-OMC MODE: AUTOPILOT]');
-      expect(result).toContain('executor: Executes code changes');
-      expect(result).toContain('explorer: Explores codebase');
-    });
-
-    it('should build context without suggested mode', () => {
-      // Arrange
-      const agents = {
-        executor: { description: 'Executes code changes' }
-      };
-
-      // Act
-      const result = buildOmcAgentContext(agents);
-
-      // Assert
-      expect(result).not.toContain('[SDK-OMC MODE:');
-      expect(result).toContain('executor: Executes code changes');
-    });
-
-    it('should include available_agents tag', () => {
-      // Arrange
-      const agents = {
-        executor: { description: 'Executes' }
-      };
-
-      // Act
-      const result = buildOmcAgentContext(agents);
-
-      // Assert
-      expect(result).toContain('<available_agents>');
-      expect(result).toContain('</available_agents>');
-    });
-  });
-
-  describe('processOMCCommand', () => {
-    it('should return original prompt when OMC not installed', () => {
-      // Arrange
-      const prompt = '/autopilot build feature';
-      const installation = { isInstalled: false };
-      const availableSkills: string[] = [];
-
-      // Act
-      const result = processOMCCommand(prompt, installation, availableSkills);
-
-      // Assert
-      expect(result.prompt).toBe(prompt);
-      expect(result.skillContext).toBeUndefined();
-    });
-
-    it('should return original prompt for non-slash commands', () => {
-      // Arrange
-      const prompt = 'Build me a feature';
-      const installation = { isInstalled: true, skillsPath: '/path/to/skills' };
-      const availableSkills = ['autopilot'];
-
-      // Act
-      const result = processOMCCommand(prompt, installation, availableSkills);
-
-      // Assert
-      expect(result.prompt).toBe('Build me a feature');
-      expect(result.skillContext).toBeUndefined();
-    });
-
-    it('should return original prompt for unknown skills', () => {
-      // Arrange
-      const prompt = '/unknown-skill do something';
-      const installation = { isInstalled: true, skillsPath: '/path/to/skills' };
-      const availableSkills = ['autopilot', 'help'];
-
-      // Act
-      const result = processOMCCommand(prompt, installation, availableSkills);
-
-      // Assert
-      expect(result.prompt).toBe(prompt);
-      expect(result.skillContext).toBeUndefined();
-    });
-  });
 });

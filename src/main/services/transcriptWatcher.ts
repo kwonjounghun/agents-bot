@@ -67,7 +67,6 @@ import {
   extractAgentIdFromFilePath,
   findMatchingAgentId,
   resolveEffectiveAgentId,
-  logIdMatchingDebug,
 } from './utils/agentIdMatcher';
 
 // Re-export TranscriptMessage for consumers
@@ -163,14 +162,7 @@ export class TranscriptWatcher {
    *                             no directory scanning, no ID matching needed.
    */
   async startWatching(agentId: string, transcriptAgentId?: string, transcriptFilePath?: string): Promise<boolean> {
-    console.log('[TranscriptWatcher] ========== START WATCHING ==========');
-    console.log('[TranscriptWatcher] agentId:', agentId);
-    console.log('[TranscriptWatcher] transcriptFilePath:', transcriptFilePath || '(none)');
-    console.log('[TranscriptWatcher] Current activeAgents:', Array.from(this.activeAgents));
-    console.log('[TranscriptWatcher] ====================================');
-
     if (!agentId) {
-      console.log('[TranscriptWatcher] Skipping — no agentId provided');
       return false;
     }
 
@@ -180,7 +172,6 @@ export class TranscriptWatcher {
       // SDK provided the exact path — register directly, no searching needed
       this.fileAgentMap.set(transcriptFilePath, agentId);
       this.cachedFiles.add(transcriptFilePath);
-      console.log('[TranscriptWatcher] Direct file registered:', transcriptFilePath);
     } else {
       // SDK did not provide path — search all session dirs by agent ID each poll cycle
       // This avoids all getSubagentsDir timing/session-contamination issues
@@ -188,7 +179,6 @@ export class TranscriptWatcher {
       if (transcriptAgentId) {
         this.transcriptIdMap.set(transcriptAgentId, agentId);
       }
-      console.log('[TranscriptWatcher] Agent queued for file search:', agentId);
     }
 
     this.startPolling();
@@ -208,7 +198,6 @@ export class TranscriptWatcher {
         this.fileAgentMap.set(filePath, agentId);
         this.cachedFiles.add(filePath);
         this.pendingAgents.delete(agentId);
-        console.log('[TranscriptWatcher] Resolved file for agent', agentId, '->', filePath);
       }
     }
   }
@@ -228,8 +217,6 @@ export class TranscriptWatcher {
         this.cachedFiles.delete(filePath);
       }
     }
-    console.log('[TranscriptWatcher] Stopped watching agentId:', agentId);
-
     // Stop polling if no more active agents
     if (this.activeAgents.size === 0 && this.pollInterval) {
       clearInterval(this.pollInterval);
@@ -254,7 +241,6 @@ export class TranscriptWatcher {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
-    console.log('[TranscriptWatcher] Stopped all watchers');
   }
 
   /**
@@ -291,9 +277,7 @@ export class TranscriptWatcher {
 
     // Only re-scan directory periodically to find new files (only when using directory-scan fallback)
     if (this.subagentsDir && now - this.lastDirScan > this.DIR_SCAN_INTERVAL_MS) {
-      console.log('[TranscriptWatcher] Scanning directory:', this.subagentsDir);
       const files = await getAgentFiles(this.subagentsDir);
-      console.log('[TranscriptWatcher] Found files:', files.map(f => f.file));
       for (const fileInfo of files) {
         this.cachedFiles.add(fileInfo.path);
       }
@@ -302,9 +286,6 @@ export class TranscriptWatcher {
 
     // Process cached files in parallel for better performance
     const filePaths = Array.from(this.cachedFiles);
-    if (filePaths.length > 0) {
-      console.log('[TranscriptWatcher] Processing', filePaths.length, 'cached files');
-    }
     await Promise.all(filePaths.map(path => this.checkFileForNewContent(path)));
   }
 
@@ -322,8 +303,6 @@ export class TranscriptWatcher {
       // Get or create file state
       let fileState = this.fileStates.get(filePath);
       if (!fileState) {
-        const fileName = filePath.split('/').pop();
-        console.log('[TranscriptWatcher] Creating NEW file state for:', fileName, 'fileSize:', fileSize);
         fileState = {
           lastPosition: 0,
           filePath,
@@ -334,37 +313,9 @@ export class TranscriptWatcher {
         this.fileStates.set(filePath, fileState);
       }
 
-      // 디버깅: 파일 상태 체크 (첫 체크 또는 새 콘텐츠가 있을 때만 로깅)
-      const isFirstCheck = fileState.lastPosition === 0;
-      const hasNewContent = fileSize > fileState.lastPosition;
-
-      if (isFirstCheck || hasNewContent) {
-        const fileName = filePath.split('/').pop();
-        console.log('[TranscriptWatcher] File check:', {
-          file: fileName,
-          fileSize,
-          lastPosition: fileState.lastPosition,
-          isFirstCheck,
-          hasNewContent,
-        });
-      }
-
       if (fileSize <= fileState.lastPosition) {
-        // No new content - 이미 모든 콘텐츠를 읽음 (매 500ms마다 체크하므로 이 로그는 생략)
         return;
       }
-
-      // 새 콘텐츠 발견!
-      const fileName = filePath.split('/').pop();
-      console.log('[TranscriptWatcher] ========== NEW CONTENT DETECTED ==========');
-      console.log('[TranscriptWatcher] File:', fileName);
-      console.log('[TranscriptWatcher] Bytes to read:', fileSize - fileState.lastPosition);
-      console.log('[TranscriptWatcher] Active agents:', Array.from(this.activeAgents));
-      console.log('[TranscriptWatcher] ===========================================');
-
-      console.log('[TranscriptWatcher] New content in file:', filePath.split('/').pop(),
-        'bytes:', fileSize - fileState.lastPosition,
-        'activeAgents:', Array.from(this.activeAgents));
 
       // Read only new bytes from the last position
       const bytesToRead = fileSize - fileState.lastPosition;
@@ -411,15 +362,6 @@ export class TranscriptWatcher {
             matchedSdkId = findMatchingAgentId(this.activeAgents, effectiveAgentId);
           }
 
-          // 디버그 로깅
-          logIdMatchingDebug('TranscriptWatcher', {
-            jsonlAgentId: message.agentId,
-            filePathAgentId: fileAgentId,
-            effectiveAgentId,
-            activeAgents: this.activeAgents,
-            matchResult: matchedSdkId,
-          });
-
           if (matchedSdkId) {
             // 매칭된 SDK agentId로 메시지 전달 (라우팅 일관성 유지)
             message.agentId = matchedSdkId;
@@ -435,9 +377,6 @@ export class TranscriptWatcher {
         try { await fileHandle.close(); } catch { /* ignore */ }
       }
       // File might not exist yet, which is fine
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error('[TranscriptWatcher] Error reading file:', filePath, error);
-      }
     }
   }
 

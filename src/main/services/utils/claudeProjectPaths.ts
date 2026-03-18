@@ -106,7 +106,6 @@ export async function getSubagentsDir(workingDirectory: string): Promise<string 
 
   const sessionId = await findLatestSessionDir(projectDir);
   if (!sessionId) {
-    console.log('[ClaudeProjectPaths] No session directory found for project:', projectSlug);
     return null;
   }
 

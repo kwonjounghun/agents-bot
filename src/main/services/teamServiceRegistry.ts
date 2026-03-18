@@ -60,7 +60,6 @@ export class TeamServiceRegistry {
     svc.textMessageId = null;
     svc.thinkingMessageId = null;
 
-    console.log('[TeamServiceRegistry] Team stopped:', teamId);
   }
 
   /**
@@ -75,7 +74,6 @@ export class TeamServiceRegistry {
     svc.transcriptHandler.clearAllAccumulators();
     this.services.delete(teamId);
 
-    console.log('[TeamServiceRegistry] Team service set deleted:', teamId);
     return true;
   }
 
@@ -94,7 +92,6 @@ export class TeamServiceRegistry {
   clear(): void {
     this.stopAll();
     this.services.clear();
-    console.log('[TeamServiceRegistry] All service sets cleared');
   }
 
   get size(): number {

@@ -41,9 +41,6 @@ function createTeamServices(teamId: string, workingDirectory: string): TeamServi
   const transcriptWatcher = createTranscriptWatcher(
     {
       onMessage: (message) => transcriptHandler.handleMessage(message),
-      onError: (error: Error, agentId: string) => {
-        console.error('[Main] Transcript error for', agentId, ':', error.message);
-      },
     },
     workingDirectory
   );
@@ -73,21 +70,16 @@ function createTeamServices(teamId: string, workingDirectory: string): TeamServi
     clearTranscriptAccumulator: (agentId) => transcriptHandler.clearAccumulator(agentId),
   });
 
-  console.log('[Main] Created service set for team:', teamId);
   return svc;
 }
 
-console.log('[Main] Waiting for app ready...');
 app.whenReady().then(async () => {
-  console.log('[Main] App is ready!');
 
   // Initialize Team Manager
   teamManager = createTeamManager();
 
   // Handle commands per team — each team uses its own isolated service set
   teamManager.on('commandReceived', async ({ teamId, command, workingDirectory, shouldContinue }: { teamId: string; command: string; workingDirectory: string; shouldContinue: boolean }) => {
-    console.log('[Main] Team command received:', command.substring(0, 50), 'team:', teamId);
-
     // Lazily create service set on first command for this team
     if (!teamServiceRegistry.has(teamId)) {
       const svc = createTeamServices(teamId, workingDirectory);
@@ -115,7 +107,6 @@ app.whenReady().then(async () => {
         continue: shouldContinue,
       });
     } catch (error) {
-      console.error('[Main] Error executing team command:', error);
       const team = teamManager?.getTeam(teamId);
       if (team) {
         teamManager?.updateAgentStatus(teamId, team.leaderId, 'error');
@@ -130,8 +121,6 @@ app.whenReady().then(async () => {
   // Initialize Tray Manager
   trayManager = createTrayManager({
     onCallLeader: async (workingDirectory: string) => {
-      console.log('[Main] Tray: Call leader for directory:', workingDirectory);
-
       if (teamManager) {
         const team = teamManager.createTeam(workingDirectory);
         teamManager.setActiveTeam(team.id);
@@ -145,7 +134,6 @@ app.whenReady().then(async () => {
       trayManager?.setActive(true);
     },
     onQuit: () => {
-      console.log('[Main] Tray: Quit requested');
       teamServiceRegistry.stopAll();
       teamManager?.clearAll();
       trayManager?.setActive(false);
@@ -162,7 +150,6 @@ app.whenReady().then(async () => {
     },
   });
   trayManager.initialize();
-  console.log('[Main] Tray manager initialized');
 
   // Setup IPC handlers
   registerIpcHandlers({

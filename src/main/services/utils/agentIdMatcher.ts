@@ -152,8 +152,8 @@ export function resolveEffectiveAgentId(
  * 디버그용: ID 매칭 상태 로깅
  */
 export function logIdMatchingDebug(
-  context: string,
-  params: {
+  _context: string,
+  _params: {
     jsonlAgentId?: string;
     filePathAgentId?: string | null;
     effectiveAgentId: string;
@@ -161,11 +161,5 @@ export function logIdMatchingDebug(
     matchResult: string | null;
   }
 ): void {
-  console.log(`[${context}] ID Matching Debug:`, {
-    jsonlAgentId: params.jsonlAgentId || '(empty)',
-    filePathAgentId: params.filePathAgentId || '(empty)',
-    effectiveAgentId: params.effectiveAgentId || '(empty)',
-    activeAgents: Array.from(params.activeAgents),
-    matchResult: params.matchResult || 'NO MATCH',
-  });
+  // no-op: debug logging removed
 }

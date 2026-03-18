@@ -118,19 +118,11 @@ export function parseStreamEvent(message: StreamEvent): ParsedMessage | null {
   const event = message.event;
   const parentToolUseId = message.parent_tool_use_id;
 
-  // Debug: Log stream event details
-  console.log('[MessageParser] parseStreamEvent:', 'has event:', !!event, 'event.type:', event?.type,
-    'parent_tool_use_id:', parentToolUseId || 'none');
-
   if (!event || event.type !== 'content_block_delta') {
-    if (event) {
-      console.log('[MessageParser] Skipping stream event type:', event.type);
-    }
     return null;
   }
 
   const delta = event.delta;
-  console.log('[MessageParser] delta.type:', delta?.type);
 
   if (delta.type === 'text_delta') {
     const parsed = parseTextDelta(delta as TextDelta);
@@ -144,7 +136,6 @@ export function parseStreamEvent(message: StreamEvent): ParsedMessage | null {
     return parsed;
   }
 
-  console.log('[MessageParser] Unknown delta type:', (delta as { type?: string })?.type);
   return null;
 }
 
@@ -176,12 +167,8 @@ export function parseAssistantMessage(message: AssistantMessage): ParsedMessage[
   }
 
   const parentToolUseId = message.parent_tool_use_id;
-  console.log('[MessageParser] parseAssistantMessage: block count:', message.message.content.length,
-    'parent_tool_use_id:', parentToolUseId || 'none');
 
   for (const block of message.message.content) {
-    console.log('[MessageParser] Block type:', block.type);
-
     if (block.type === 'tool_use') {
       const parsed = parseToolUse(block as ToolUseBlock);
       parsed.parentToolUseId = parentToolUseId;
@@ -251,20 +238,12 @@ export function parseMessage(message: unknown): ParsedMessage | ParsedMessage[] 
 
   const msg = message as { type?: string; subtype?: string };
 
-  // Debug: Log all message types we receive
-  console.log('[MessageParser] Received message type:', msg.type, 'subtype:', msg.subtype || 'none');
-
   switch (msg.type) {
     case 'assistant':
       return parseAssistantMessage(message as AssistantMessage);
 
-    case 'stream_event': {
-      const result = parseStreamEvent(message as StreamEvent);
-      if (result) {
-        console.log('[MessageParser] Parsed stream_event:', result.type, 'content length:', result.content?.length || 0);
-      }
-      return result;
-    }
+    case 'stream_event':
+      return parseStreamEvent(message as StreamEvent);
 
     case 'result':
       return parseResultMessage(message as ResultMessage);
@@ -277,7 +256,6 @@ export function parseMessage(message: unknown): ParsedMessage | ParsedMessage[] 
       return null;
 
     default:
-      console.log('[MessageParser] Unknown message type:', msg.type, JSON.stringify(message).substring(0, 200));
       return null;
   }
 }

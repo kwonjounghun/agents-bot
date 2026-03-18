@@ -100,8 +100,6 @@ export class TeamManager extends EventEmitter {
       this.activeTeamId = teamId;
     }
 
-    console.log('[TeamManager] Team created:', teamId, workingDirectory);
-
     // Emit events
     this.emit('teamCreated', team);
     this.sendToRenderer('team:created', this.serializeTeam(team));
@@ -151,12 +149,10 @@ export class TeamManager extends EventEmitter {
    */
   setActiveTeam(teamId: string): boolean {
     if (!this.teams.has(teamId)) {
-      console.warn('[TeamManager] Team not found:', teamId);
       return false;
     }
 
     this.activeTeamId = teamId;
-    console.log('[TeamManager] Active team set:', teamId);
     this.sendToRenderer('team:active-changed', { teamId });
     return true;
   }
@@ -179,13 +175,11 @@ export class TeamManager extends EventEmitter {
   addAgent(teamId: string, agentInfo: Omit<AgentInfo, 'messages'>): AgentInfo | undefined {
     const team = this.teams.get(teamId);
     if (!team) {
-      console.warn('[TeamManager] Team not found for adding agent:', teamId);
       return undefined;
     }
 
     // Check if agent already exists
     if (team.agents.has(agentInfo.id)) {
-      console.log('[TeamManager] Agent already exists:', agentInfo.id);
       return team.agents.get(agentInfo.id);
     }
 
@@ -195,7 +189,6 @@ export class TeamManager extends EventEmitter {
     };
 
     team.agents.set(agent.id, agent);
-    console.log('[TeamManager] Agent added:', agent.id, agent.role, 'to team:', teamId);
 
     // Update team status to active
     if (team.status === 'idle') {
@@ -241,8 +234,7 @@ export class TeamManager extends EventEmitter {
 
     // Cap message array to prevent memory leaks
     if (agent.messages.length > TeamManager.MAX_MESSAGES_PER_AGENT) {
-      const removed = agent.messages.splice(0, agent.messages.length - TeamManager.MAX_MESSAGES_PER_AGENT);
-      console.log(`[TeamManager] Pruned ${removed.length} old messages for agent ${agentId}`);
+      agent.messages.splice(0, agent.messages.length - TeamManager.MAX_MESSAGES_PER_AGENT);
     }
 
     this.emit('agentMessage', { teamId, agentId, message });
@@ -281,12 +273,10 @@ export class TeamManager extends EventEmitter {
 
     // Don't remove leader
     if (agentId === team.leaderId) {
-      console.warn('[TeamManager] Cannot remove leader agent');
       return;
     }
 
     if (team.agents.delete(agentId)) {
-      console.log('[TeamManager] Agent removed:', agentId, 'from team:', teamId);
       this.emit('agentRemoved', { teamId, agentId });
       this.sendToRenderer('team:agent-removed', { teamId, agentId });
     }
@@ -306,7 +296,6 @@ export class TeamManager extends EventEmitter {
     }
 
     this.teams.delete(teamId);
-    console.log('[TeamManager] Team deleted:', teamId);
 
     this.emit('teamDeleted', { teamId });
     this.sendToRenderer('team:deleted', { teamId });
@@ -346,7 +335,6 @@ export class TeamManager extends EventEmitter {
   handleCommand(teamId: string, command: string): void {
     const team = this.teams.get(teamId);
     if (!team) {
-      console.warn('[TeamManager] Team not found for command:', teamId);
       return;
     }
 
@@ -371,9 +359,6 @@ export class TeamManager extends EventEmitter {
     // Mark conversation as started for subsequent commands
     if (!team.hasConversationStarted) {
       team.hasConversationStarted = true;
-      console.log('[TeamManager] Starting new conversation for team:', teamId);
-    } else {
-      console.log('[TeamManager] Continuing existing conversation for team:', teamId);
     }
 
     // Emit command event for main process to handle

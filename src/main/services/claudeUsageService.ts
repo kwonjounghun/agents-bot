@@ -69,7 +69,7 @@ function loadCredentials(): { oauth: OAuthCredentials; fullData: CredentialsFile
         return { oauth: parsed.claudeAiOauth, fullData: parsed };
       }
     } catch {
-      console.warn('[UsageService] credentials file read/parse failed');
+      // ignore read/parse failure
     }
   }
 
@@ -157,7 +157,6 @@ async function refreshToken(oauth: OAuthCredentials): Promise<string | null> {
     });
 
     if (resp.status === 400 || resp.status === 401) {
-      console.error('[UsageService] Token refresh failed:', resp.status);
       return null;
     }
 
@@ -181,8 +180,7 @@ async function refreshToken(oauth: OAuthCredentials): Promise<string | null> {
     }
 
     return body.access_token;
-  } catch (e) {
-    console.error('[UsageService] Token refresh error:', e);
+  } catch {
     return null;
   }
 }

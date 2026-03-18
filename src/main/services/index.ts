@@ -36,11 +36,8 @@ export {
   parseSlashCommand,
   loadSkillDefinition,
   buildFinalPrompt,
-  buildOmcAgentContext,
-  processOMCCommand,
   type SlashCommand,
-  type ProcessedPrompt,
-  type OMCInstallation
+  type ProcessedPrompt
 } from './promptProcessor';
 
 // Hook Builder

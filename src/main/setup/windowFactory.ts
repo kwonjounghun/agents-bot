@@ -43,8 +43,6 @@ export async function createMainWindow(
 ): Promise<BrowserWindow> {
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
 
-  console.log('[WindowFactory] Creating main window...');
-
   const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
 
   const win = new BrowserWindow({
@@ -76,16 +74,10 @@ export async function createMainWindow(
  */
 function setupWindowEventHandlers(win: BrowserWindow): void {
   win.once('ready-to-show', () => {
-    console.log('[WindowFactory] Window ready to show');
     win.show();
   });
 
-  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-    console.error('[WindowFactory] Failed to load:', errorCode, errorDescription);
-  });
-
   win.webContents.on('did-finish-load', () => {
-    console.log('[WindowFactory] Page finished loading');
   });
 }
 
@@ -96,16 +88,12 @@ async function loadWindowContent(win: BrowserWindow): Promise<void> {
   try {
     if (process.env.NODE_ENV === 'development') {
       const url = process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173';
-      console.log('[WindowFactory] Loading renderer from:', url);
       await win.loadURL(url);
     } else {
       const filePath = join(__dirname, '../renderer/index.html');
-      console.log('[WindowFactory] Loading file:', filePath);
       await win.loadFile(filePath);
     }
-    console.log('[WindowFactory] Load completed');
-  } catch (error) {
-    console.error('[WindowFactory] Error loading window:', error);
+  } catch {
     win.show();
   }
 }

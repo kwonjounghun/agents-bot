@@ -75,9 +75,6 @@ export function buildBaseHooks(callbacks: HookCallbacks): SDKHooks {
   return {
     SubagentStart: [{
       hooks: [async (input: HookInput): Promise<HookResult> => {
-        // Debug: Log all fields received from SDK
-        console.log('[HookBuilder] SubagentStart input:', JSON.stringify(input, null, 2));
-
         // Try to get the agent type from various possible fields
         // SDK passes: agent_type (internal type) and potentially subagent_type (user-specified)
         const agentType = input.subagent_type || input.agent_type || input.type || 'unknown';
@@ -92,15 +89,6 @@ export function buildBaseHooks(callbacks: HookCallbacks): SDKHooks {
             transcriptAgentId = match[1];
           }
         }
-
-        console.log('[HookBuilder] Resolved agentType:', agentType,
-          '(subagent_type:', input.subagent_type,
-          ', agent_type:', input.agent_type,
-          ', type:', input.type,
-          ', tool_use_id:', input.tool_use_id,
-          ', agent_id:', input.agent_id,
-          ', transcriptAgentId:', transcriptAgentId,
-          ', transcriptFilePath:', transcriptFilePath, ')');
 
         callbacks.onAgentStart({
           agentId: input.agent_id || '',
@@ -161,7 +149,6 @@ export interface QueryParams {
   model?: string;
   abortController?: AbortController;
   hooks?: SDKHooks;
-  agents?: Record<string, unknown>;
   /** Continue the most recent conversation instead of starting a new one */
   continue?: boolean;
   pathToClaudeCodeExecutable: string;
@@ -179,6 +166,8 @@ export interface QueryOptions {
   agents?: Record<string, unknown>;
   /** Continue the most recent conversation instead of starting a new one */
   continue?: boolean;
+  /** Load CLAUDE.md, Skills, Hooks, Permissions from filesystem */
+  settingSources?: string[];
 }
 
 /**
@@ -196,8 +185,8 @@ export function buildQueryOptions(params: QueryParams): QueryOptions {
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
     pathToClaudeCodeExecutable: params.pathToClaudeCodeExecutable,
+    settingSources: ['user', 'project'],
     hooks: params.hooks,
-    agents: params.agents,
     continue: params.continue
   };
 }

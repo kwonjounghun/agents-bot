@@ -67,8 +67,8 @@ export async function readState<T extends ModeState = ModeState>(
         const content = fs.readFileSync(sessionPath, 'utf-8');
         return JSON.parse(content) as T;
       }
-    } catch (error) {
-      console.error(`[SDK-OMC] Error reading ${mode} state from session ${sessionId}:`, error);
+    } catch {
+      // ignore session state read error
     }
   }
 
@@ -81,8 +81,7 @@ export async function readState<T extends ModeState = ModeState>(
 
     const content = fs.readFileSync(legacyPath, 'utf-8');
     return JSON.parse(content) as T;
-  } catch (error) {
-    console.error(`[SDK-OMC] Error reading ${mode} state:`, error);
+  } catch {
     return null;
   }
 }
@@ -104,7 +103,6 @@ export async function writeState<T extends ModeState = ModeState>(
   try {
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
   } catch (error) {
-    console.error(`[SDK-OMC] Error writing ${mode} state:`, error);
     throw error;
   }
 }
@@ -126,7 +124,6 @@ export async function clearState(
       fs.unlinkSync(statePath);
     }
   } catch (error) {
-    console.error(`[SDK-OMC] Error clearing ${mode} state:`, error);
     throw error;
   }
 }

@@ -41,10 +41,6 @@ export interface ClaudeServiceDependencies {
 export function setupClaudeService(deps: ClaudeServiceDependencies): ClaudeAgentService {
   const claudeService = new ClaudeAgentService();
 
-  // Enable SDK-OMC mode (built-in OMC implementation)
-  claudeService.enableSdkOmc();
-  console.log('[ClaudeServiceSetup] SDK-OMC enabled for team:', deps.teamId);
-
   setupAgentLifecycleHandlers(claudeService, deps);
   setupMessageHandlers(claudeService, deps);
 
@@ -61,21 +57,9 @@ function setupAgentLifecycleHandlers(
   // Auto-detect agent starts from SDK hooks
   claudeService.on('agentStart', async (event: AgentStartEvent) => {
     const normalizedRole = deps.normalizeAgentType(event.agentType);
-    console.log(
-      '[ClaudeServiceSetup] Agent started:',
-      event.agentType,
-      '->',
-      normalizedRole,
-      event.agentId,
-      'toolUseId:',
-      event.toolUseId || 'none',
-      'team:',
-      deps.teamId
-    );
 
     // Check if StreamRouter already has this agent
     if (deps.streamRouter?.hasAgent(event.agentId)) {
-      console.log('[ClaudeServiceSetup] Agent already tracked');
       return;
     }
 
@@ -100,8 +84,6 @@ function setupAgentLifecycleHandlers(
     // Start watching transcript for this agent
     // Pass transcriptFilePath for direct file watching (most reliable — bypasses directory scanning)
     if (deps.transcriptWatcher) {
-      console.log('[ClaudeServiceSetup] Starting transcript watcher:', event.agentId,
-        'transcriptFilePath:', event.transcriptFilePath || '(none)');
       deps.transcriptWatcher.startWatching(event.agentId, event.transcriptAgentId, event.transcriptFilePath);
     }
 
@@ -114,8 +96,6 @@ function setupAgentLifecycleHandlers(
 
   // Auto-detect agent stops from SDK hooks
   claudeService.on('agentStop', (event: AgentStopEvent) => {
-    console.log('[ClaudeServiceSetup] Agent stopped:', event.agentId, 'team:', deps.teamId);
-
     // Stop watching transcript
     if (deps.transcriptWatcher) {
       deps.transcriptWatcher.stopWatching(event.agentId);
@@ -144,7 +124,6 @@ function setupAgentLifecycleHandlers(
 
   // Handle available agents list
   claudeService.on('agentsAvailable', (agents: string[]) => {
-    console.log('[ClaudeServiceSetup] Agents available:', agents);
     deps.sendToRenderer('team:agents-available', { teamId: deps.teamId, agents });
   });
 }
@@ -179,15 +158,6 @@ function setupMessageHandlers(
   }
 
   claudeService.on('message', (message: ClaudeAgentMessage) => {
-    console.log(
-      '[ClaudeServiceSetup] Message:',
-      message.type,
-      'parentToolUseId:',
-      message.parentToolUseId || 'none',
-      'team:',
-      deps.teamId
-    );
-
     switch (message.type) {
       case 'text':
         handleStreamingMessage('text', message, deps, leaderState);
@@ -226,7 +196,6 @@ function handleStreamingMessage(
     if (team) {
       // Skip if content equals accumulated (duplicate final message)
       if (leaderState.accumulatedContent === message.content) {
-        console.log(`[ClaudeServiceSetup] Skipping duplicate final ${messageType} message`);
         return;
       }
 

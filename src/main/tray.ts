@@ -174,7 +174,6 @@ export class TrayManager {
 
     if (!result.canceled && result.filePaths.length > 0) {
       const workingDirectory = result.filePaths[0];
-      console.log('[Tray] Calling team leader for directory:', workingDirectory);
       this.callbacks.onCallLeader(workingDirectory);
     }
   }

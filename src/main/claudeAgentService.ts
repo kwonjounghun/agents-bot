@@ -2,7 +2,8 @@
  * Claude Agent Service
  *
  * This service orchestrates the Claude Agent SDK interactions.
- * Uses composed single-responsibility modules for specific tasks.
+ * With settingSources: ["user", "project"], the SDK automatically loads
+ * agents, hooks, skills, and CLAUDE.md from the filesystem.
  */
 
 import { EventEmitter } from 'events';
@@ -17,23 +18,13 @@ import {
   type ParsedMessage
 } from './services/messageParser';
 import {
-  buildFinalPrompt,
-  buildOmcAgentContext
-} from './services/promptProcessor';
-import {
   buildBaseHooks,
-  mergeHooks,
   buildQueryOptions,
   type AgentStartEvent,
   type AgentStopEvent,
-  type SDKHooks
 } from './services/hookBuilder';
 
 // Composed services
-import {
-  OMCIntegration,
-  createOMCIntegration
-} from './services/omcIntegration';
 import {
   PersistentModeService,
   createPersistentModeService,
@@ -42,7 +33,6 @@ import {
 
 // Types
 import type { ExecutionResult, SkillMode } from '../sdk-omc/types';
-import type { OMCStatus } from './omc';
 
 export interface ClaudeAgentMessage {
   type: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'result' | 'error';
@@ -64,79 +54,10 @@ export class ClaudeAgentService extends EventEmitter {
   private currentWorkingDirectory: string = process.cwd();
 
   // Composed services
-  private omcIntegration: OMCIntegration;
   private persistentModeService: PersistentModeService | null = null;
 
   constructor() {
     super();
-    this.omcIntegration = createOMCIntegration({
-      workingDirectory: this.currentWorkingDirectory
-    });
-    this.setupOMCEventForwarding();
-  }
-
-  /**
-   * Setup OMC event forwarding to service listeners
-   */
-  private setupOMCEventForwarding(): void {
-    this.omcIntegration.on('skillActivated', (data) => {
-      this.emit('omcSkillActivated', data);
-    });
-    this.omcIntegration.on('modeChanged', (data) => {
-      this.emit('omcModeChanged', data);
-    });
-    this.omcIntegration.on('keywordsDetected', (data) => {
-      this.emit('omcKeywordsDetected', data);
-    });
-  }
-
-  // ============================================
-  // OMC Integration (delegated to OMCIntegration)
-  // ============================================
-
-  enableSdkOmc(): void {
-    this.omcIntegration.enable();
-  }
-
-  isSdkOmcEnabled(): boolean {
-    return this.omcIntegration.isEnabled();
-  }
-
-  async initSdkOmc(workingDirectory?: string): Promise<{
-    success: boolean;
-    activeModes: string[];
-    agents: string[];
-    skills: string[];
-  }> {
-    const cwd = workingDirectory || this.currentWorkingDirectory;
-    this.omcIntegration.setWorkingDirectory(cwd);
-    return this.omcIntegration.initializeSdk(cwd);
-  }
-
-  getSdkOmcQueryOptions(options = {}): ReturnType<typeof this.omcIntegration.getQueryOptions> {
-    return this.omcIntegration.getQueryOptions(options);
-  }
-
-  processSdkOmcPrompt(prompt: string): ReturnType<typeof this.omcIntegration.processPrompt> {
-    return this.omcIntegration.processPrompt(prompt);
-  }
-
-  async getSdkOmcStatus(): Promise<Awaited<ReturnType<typeof this.omcIntegration.getStatus>>> {
-    return this.omcIntegration.getStatus();
-  }
-
-  getSdkOmcAgents(): ReturnType<typeof this.omcIntegration.getAgents> {
-    return this.omcIntegration.getAgents();
-  }
-
-  async initOMC(workingDirectory?: string): Promise<OMCStatus> {
-    const cwd = workingDirectory || this.currentWorkingDirectory;
-    this.omcIntegration.setWorkingDirectory(cwd);
-    return this.omcIntegration.initializeExternal(cwd);
-  }
-
-  getOMCStatus(workingDirectory?: string): OMCStatus {
-    return this.omcIntegration.getExternalStatus(workingDirectory || this.currentWorkingDirectory);
   }
 
   // ============================================
@@ -148,115 +69,56 @@ export class ClaudeAgentService extends EventEmitter {
    */
   async query(options: QueryOptions): Promise<void> {
     if (this.isRunning) {
-      console.log('[ClaudeAgentService] Already running, stopping previous query');
       this.stop();
     }
 
     this.isRunning = true;
     this.abortController = new AbortController();
 
-    const { prompt: rawPrompt, workingDirectory, model, continue: continueConversation } = options;
+    const { prompt, workingDirectory, model, continue: continueConversation } = options;
     this.currentWorkingDirectory = workingDirectory || process.cwd();
-    this.omcIntegration.setWorkingDirectory(this.currentWorkingDirectory);
-
-    console.log('[ClaudeAgentService] Starting query');
-    console.log('[ClaudeAgentService] Working directory:', this.currentWorkingDirectory);
-    console.log('[ClaudeAgentService] Model:', model || 'default');
-
-    // Initialize OMC if not already done
-    if (!this.omcIntegration.isInitialized()) {
-      if (this.omcIntegration.isEnabled()) {
-        await this.omcIntegration.initializeSdk(this.currentWorkingDirectory);
-      } else {
-        await this.omcIntegration.initializeExternal(this.currentWorkingDirectory);
-      }
-    }
-
-    // Process OMC commands (skill loading)
-    const { prompt, skillContext } = this.omcIntegration.processCommand(rawPrompt);
-    if (skillContext) {
-      console.log('[ClaudeAgentService] OMC skill context loaded');
-    }
-
-    // Process SDK-OMC keywords if enabled
-    let sdkOmcContext = '';
-    if (this.omcIntegration.isEnabled()) {
-      const omcResult = this.omcIntegration.processPrompt(rawPrompt);
-      if (omcResult.suggestedMode) {
-        console.log('[ClaudeAgentService] SDK-OMC mode detected:', omcResult.suggestedMode);
-      }
-
-      // Build OMC agent context
-      const agents = this.omcIntegration.getAgents();
-      sdkOmcContext = buildOmcAgentContext(agents, omcResult.suggestedMode || undefined);
-    }
 
     try {
       const sdk = await getSDK();
-      console.log('[ClaudeAgentService] SDK loaded, creating query iterator...');
-
-      // Build the final prompt with contexts
-      const finalPrompt = buildFinalPrompt(prompt, skillContext, sdkOmcContext);
-      console.log('[ClaudeAgentService] Final prompt length:', finalPrompt.length);
 
       // Build base hooks for agent tracking
       const baseHooks = buildBaseHooks({
         onAgentStart: (event) => {
-          console.log('[ClaudeAgentService] SubagentStart:', event.agentType, event.agentId);
           this.emit('agentStart', event);
         },
         onAgentStop: (event) => {
-          console.log('[ClaudeAgentService] SubagentStop:', event.agentId);
           this.emit('agentStop', event);
         }
       });
 
-      // Merge OMC hooks with base hooks
-      const finalHooks = mergeHooks(baseHooks, this.omcIntegration.getHooks() as SDKHooks | null);
-
-      // Build query options
+      // Build query options (settingSources handles agents/hooks/skills automatically)
       const claudePath = execSync('which claude', { encoding: 'utf-8' }).trim();
       const queryOpts = buildQueryOptions({
         workingDirectory: this.currentWorkingDirectory,
         model,
         abortController: this.abortController,
-        hooks: finalHooks,
-        agents: this.omcIntegration.isEnabled() ? this.omcIntegration.getAgents() : undefined,
+        hooks: baseHooks,
         continue: continueConversation,
         pathToClaudeCodeExecutable: claudePath
       });
 
-      if (this.omcIntegration.isEnabled()) {
-        console.log('[ClaudeAgentService] SDK-OMC agents registered:', Object.keys(queryOpts.agents || {}).length);
-      }
-
       const queryIterator = sdk.query({
-        prompt: finalPrompt,
+        prompt,
         options: queryOpts as any
       });
 
       // Store query iterator for proper cleanup on stop
       this.currentQuery = queryIterator;
 
-      console.log('[ClaudeAgentService] Query iterator created, starting message loop...');
-      let messageCount = 0;
-
       for await (const message of queryIterator) {
-        messageCount++;
-        console.log('[ClaudeAgentService] Message #' + messageCount + ':', (message as any).type, (message as any).subtype || '');
-
         if (this.abortController?.signal.aborted) {
-          console.log('[ClaudeAgentService] Query aborted');
           break;
         }
 
         this.processMessage(message);
       }
 
-      console.log('[ClaudeAgentService] Message loop ended. Total messages:', messageCount);
-
     } catch (error) {
-      console.error('[ClaudeAgentService] Query error:', error);
       this.emit('message', {
         type: 'error',
         content: error instanceof Error ? error.message : 'Unknown error occurred'
@@ -294,7 +156,6 @@ export class ClaudeAgentService extends EventEmitter {
    */
   private emitParsedMessage(parsed: ParsedMessage): void {
     if (parsed.type === 'system' && parsed.agents) {
-      console.log('[ClaudeAgentService] Available agents:', parsed.agents);
       this.emit('agentsAvailable', parsed.agents);
       return;
     }
@@ -321,10 +182,9 @@ export class ClaudeAgentService extends EventEmitter {
     // Close query iterator first for proper resource cleanup
     if (this.currentQuery) {
       try {
-        // Call return() to properly close the async generator
         this.currentQuery.return(undefined);
       } catch (e) {
-        console.log('[ClaudeAgentService] Error closing query:', e);
+        // ignore
       }
       this.currentQuery = null;
     }
@@ -356,11 +216,6 @@ export class ClaudeAgentService extends EventEmitter {
     task: string,
     options?: { maxIterations?: number; requireVerification?: boolean }
   ): Promise<ExecutionResult> {
-    // Initialize OMC if needed
-    if (!this.omcIntegration.isInitialized() && this.omcIntegration.isEnabled()) {
-      await this.omcIntegration.initializeSdk(this.currentWorkingDirectory);
-    }
-
     // Create persistent mode service if not exists
     if (!this.persistentModeService) {
       this.persistentModeService = createPersistentModeService(
@@ -448,12 +303,9 @@ export class ClaudeAgentService extends EventEmitter {
 
   /**
    * Create a query function for the persistent executor
-   * Uses local variables instead of instance properties to prevent
-   * shared state corruption across concurrent persistent mode iterations
    */
   private createQueryFunction(): QueryFunction {
     return async (prompt: string) => {
-      // Use local variables scoped to this invocation (not instance properties)
       let queryResponse = '';
       const toolsUsed: string[] = [];
 

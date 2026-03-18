@@ -44,13 +44,7 @@ function registerDialogHandlers(services: IPCServices): void {
     });
 
     if (!result.canceled && result.filePaths.length > 0) {
-      const selectedDir = result.filePaths[0];
-      // Update working directory for the active team's transcript watcher
-      const activeTeam = services.teamManager?.getActiveTeam();
-      if (activeTeam) {
-        services.teamServiceRegistry?.get(activeTeam.id)?.transcriptWatcher?.setWorkingDirectory(selectedDir);
-      }
-      return selectedDir;
+      return result.filePaths[0];
     }
     return null;
   });
@@ -68,7 +62,6 @@ function registerDialogHandlers(services: IPCServices): void {
 function registerControlHandlers(services: IPCServices): void {
   // Window ready notification
   ipcMain.on('window:ready', () => {
-    console.log('[IPC] Window ready');
     if (services.teamManager) {
       services.sendToRenderer('team:init', {
         teams: services.teamManager.getSerializedTeams(),
@@ -84,7 +77,6 @@ function registerControlHandlers(services: IPCServices): void {
 function registerTeamHandlers(services: IPCServices): void {
   // Create new team
   ipcMain.handle('team:create', async (_event, workingDirectory: string) => {
-    console.log('[IPC] Creating team for:', workingDirectory);
     const team = services.teamManager?.createTeam(workingDirectory);
     return team ? {
       id: team.id,
@@ -101,13 +93,11 @@ function registerTeamHandlers(services: IPCServices): void {
 
   // Set active team
   ipcMain.handle('team:set-active', (_event, teamId: string) => {
-    console.log('[IPC] Setting active team:', teamId);
     return services.teamManager?.setActiveTeam(teamId) || false;
   });
 
   // Delete team
   ipcMain.handle('team:delete', (_event, teamId: string) => {
-    console.log('[IPC] Deleting team:', teamId);
     // Stop and clean up team services first
     services.teamServiceRegistry?.delete(teamId);
     return services.teamManager?.deleteTeam(teamId) || false;
@@ -115,7 +105,6 @@ function registerTeamHandlers(services: IPCServices): void {
 
   // Send command to team
   ipcMain.on('team:send-command', (_event, { teamId, command }: { teamId: string; command: string }) => {
-    console.log('[IPC] Team command:', teamId, command.substring(0, 50));
     services.teamManager?.handleCommand(teamId, command);
   });
 
@@ -134,17 +123,13 @@ function registerTeamHandlers(services: IPCServices): void {
 
   // Close all teams
   ipcMain.on('team:close-all', () => {
-    console.log('[IPC] Closing all teams');
     services.teamServiceRegistry?.stopAll();
     services.teamManager?.clearAll();
   });
 
   // Stop agents for a specific team only
   ipcMain.on('team:stop-all-agents', (_event, teamId: string) => {
-    console.log('[IPC] Stopping agents for team:', teamId);
-
     if (!teamId) {
-      console.warn('[IPC] team:stop-all-agents called without teamId — ignoring');
       return;
     }
 
@@ -188,41 +173,15 @@ function registerTeamHandlers(services: IPCServices): void {
 /**
  * OMC-related IPC handlers
  */
-function registerOmcHandlers(services: IPCServices): void {
-  // Get OMC installation status
-  ipcMain.handle('omc:get-status', async (_event, workingDirectory?: string) => {
-    const activeTeam = services.teamManager?.getActiveTeam();
-    const teamId = activeTeam?.id;
-    const cwd = workingDirectory || activeTeam?.workingDirectory || process.cwd();
-
-    if (teamId) {
-      const svc = services.teamServiceRegistry?.get(teamId);
-      if (svc) {
-        return svc.claudeService.getOMCStatus(cwd);
-      }
-    }
-
-    return {
-      installed: false,
-      version: null,
-      skillCount: 0,
-      skills: [],
-      activeModes: [],
-    };
+function registerOmcHandlers(_services: IPCServices): void {
+  // OMC is now handled automatically via settingSources: ["user", "project"]
+  // These stubs remain for backward compatibility in case preload scripts reference them
+  ipcMain.handle('omc:get-status', async () => {
+    return { installed: true, version: 'settingSources', skillCount: 0, skills: [], activeModes: [] };
   });
 
-  // Initialize OMC
-  ipcMain.handle('omc:initialize', async (_event, workingDirectory?: string) => {
-    const activeTeam = services.teamManager?.getActiveTeam();
-    const teamId = activeTeam?.id;
-    const cwd = workingDirectory || activeTeam?.workingDirectory || process.cwd();
-
-    if (teamId) {
-      const svc = services.teamServiceRegistry?.get(teamId);
-      if (svc) {
-        return svc.claudeService.initOMC(cwd);
-      }
-    }
+  ipcMain.handle('omc:initialize', async () => {
+    return { success: true };
   });
 }
 

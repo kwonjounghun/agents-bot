@@ -26,7 +26,7 @@ import {
   completeMode,
   failMode
 } from '../state';
-import { detectKeywordsWithType } from '../hooks';
+
 import { ModePromptBuilder, createModePromptBuilder, type QueryResult } from './prompts/modePromptBuilder';
 
 /**

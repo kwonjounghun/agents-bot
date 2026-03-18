@@ -32,7 +32,6 @@ export class AgentIdMapper {
    */
   setToolUseMapping(toolUseId: string, agentId: string): void {
     this.toolUseIdToAgentId.set(toolUseId, agentId);
-    console.log(`[AgentIdMapper] Mapped toolUseId ${toolUseId} -> agentId ${agentId}`);
   }
 
   /**
@@ -40,7 +39,6 @@ export class AgentIdMapper {
    */
   removeToolUseMapping(toolUseId: string): void {
     this.toolUseIdToAgentId.delete(toolUseId);
-    console.log(`[AgentIdMapper] Removed toolUseId mapping: ${toolUseId}`);
   }
 
   /**
@@ -55,7 +53,6 @@ export class AgentIdMapper {
    */
   setTranscriptMapping(transcriptAgentId: string, agentId: string): void {
     this.transcriptAgentIdMap.set(transcriptAgentId, agentId);
-    console.log(`[AgentIdMapper] Mapped transcriptAgentId ${transcriptAgentId} -> agentId ${agentId}`);
   }
 
   /**
@@ -95,7 +92,6 @@ export class AgentIdMapper {
   clear(): void {
     this.toolUseIdToAgentId.clear();
     this.transcriptAgentIdMap.clear();
-    console.log('[AgentIdMapper] Cleared all mappings');
   }
 
   /**

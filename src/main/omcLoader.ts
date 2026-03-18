@@ -139,7 +139,6 @@ export async function loadOMCSkill(config: OMCConfig, skillName: string): Promis
  */
 export async function createOMCHooks(config: OMCConfig): Promise<SDKHooks> {
   if (!config.isInstalled || !config.pluginPath) {
-    console.log('[OMCLoader] OMC not installed, returning empty hooks');
     return {};
   }
 
@@ -153,7 +152,6 @@ export async function createOMCHooks(config: OMCConfig): Promise<SDKHooks> {
       // Check for skill command
       const { isCommand, skill, args } = parseOMCCommand(prompt);
       if (isCommand && skill && config.skills.includes(skill)) {
-        console.log(`[OMCLoader] Detected OMC skill: ${skill}`);
 
         // Load skill definition
         const skillDef = await loadOMCSkill(config, skill);
@@ -167,10 +165,7 @@ export async function createOMCHooks(config: OMCConfig): Promise<SDKHooks> {
       }
 
       // Check for magic keywords (team, autopilot, ralph, etc.)
-      const keywords = detectOMCKeywords(prompt);
-      if (keywords.length > 0) {
-        console.log(`[OMCLoader] Detected keywords: ${keywords.join(', ')}`);
-      }
+      detectOMCKeywords(prompt);
 
       return { continue: true };
     }]

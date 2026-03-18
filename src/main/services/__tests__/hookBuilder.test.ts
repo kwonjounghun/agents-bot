@@ -269,12 +269,10 @@ describe('HookBuilder', () => {
       expect(result.hooks).toBe(hooks);
     });
 
-    it('should include agents when provided', () => {
+    it('should include settingSources', () => {
       // Arrange
-      const agents = { executor: { name: 'executor' } };
       const params = {
         workingDirectory: '/path/to/project',
-        agents,
         pathToClaudeCodeExecutable: '/usr/bin/claude'
       };
 
@@ -282,7 +280,7 @@ describe('HookBuilder', () => {
       const result = buildQueryOptions(params);
 
       // Assert
-      expect(result.agents).toBe(agents);
+      expect(result.settingSources).toEqual(['user', 'project']);
     });
   });
 });

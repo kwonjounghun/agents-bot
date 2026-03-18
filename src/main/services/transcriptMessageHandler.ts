@@ -158,14 +158,7 @@ export function createTranscriptMessageHandler(
     messageType: 'thinking' | 'text' | 'tool_use' | 'tool_result' | 'speaking',
     content: string,
   ): void {
-    console.log('[TranscriptMessageHandler] routeToTeam:', {
-      agentId,
-      messageType,
-      contentPreview: content.substring(0, 50)
-    });
-
     if (!teamManager) {
-      console.log('[TranscriptMessageHandler] No teamManager');
       return;
     }
 
@@ -173,15 +166,12 @@ export function createTranscriptMessageHandler(
     // when the active team changes while a subagent is still running.
     const activeTeam = teamManager.findTeamByAgentId(agentId);
     if (!activeTeam) {
-      console.log('[TranscriptMessageHandler] No team found for agent:', agentId);
       return;
     }
 
     // Find agent in team and add message
     const agent = activeTeam.agents.get(agentId);
-    console.log('[TranscriptMessageHandler] Looking for agent:', agentId, 'in team agents:', Array.from(activeTeam.agents.keys()));
     if (agent) {
-      console.log('[TranscriptMessageHandler] Adding message to agent:', agentId, 'type:', messageType);
       teamManager.addAgentMessage(activeTeam.id, agentId, {
         id: `msg-${Date.now()}`,
         type: messageType,
@@ -189,19 +179,11 @@ export function createTranscriptMessageHandler(
         timestamp: Date.now(),
         isStreaming: true,
       });
-    } else {
-      console.log('[TranscriptMessageHandler] Agent not found in team:', agentId);
     }
   }
 
   return {
     handleMessage(message: TranscriptMessage): void {
-      console.log('[TranscriptMessageHandler] handleMessage:', {
-        type: message.type,
-        agentId: message.agentId,
-        contentPreview: message.content?.substring(0, 50)
-      });
-
       // Register tool_use for later tool_result correlation (side effect before pure check)
       if (message.type === 'tool_use' && message.toolUseId && message.toolName) {
         registerToolUse(message.toolUseId, message.toolName);
@@ -209,7 +191,6 @@ export function createTranscriptMessageHandler(
 
       // Filter unwanted messages (pure predicate, no side effects)
       if (shouldSkipMessage(message)) {
-        console.log('[TranscriptMessageHandler] Skipped message type:', message.type);
         return;
       }
 
@@ -217,10 +198,8 @@ export function createTranscriptMessageHandler(
       // Use getAgentByTranscriptId for JSONL agentId matching (claude-esp style)
       const agentContext = streamRouter?.getAgentByTranscriptId(message.agentId!);
       if (!agentContext) {
-        console.log('[TranscriptMessageHandler] No agent context found for agentId:', message.agentId);
         return;
       }
-      console.log('[TranscriptMessageHandler] Found agent context:', agentContext.agentId, agentContext.normalizedRole);
 
       // Get or create accumulator for this agent
       const accum = getAccumulator(message.agentId!);

@@ -85,10 +85,6 @@ export class StreamRouter {
   ): Promise<AgentContext> {
     // Prevent stack overflow
     if (this.contextStack.length >= this.config.maxContextDepth) {
-      console.warn(
-        `[StreamRouter] Context stack depth limit reached (${this.config.maxContextDepth}). ` +
-        `Ignoring nested agent: ${agentType}`
-      );
       // Return a dummy context but don't push
       return {
         agentId,
@@ -120,11 +116,6 @@ export class StreamRouter {
       this.idMapper.setTranscriptMapping(transcriptAgentId, agentId);
     }
 
-    console.log(
-      `[StreamRouter] Agent started: ${normalizedRole} (${agentId}), ` +
-      `stack depth: ${this.contextStack.length}`
-    );
-
     return context;
   }
 
@@ -135,7 +126,6 @@ export class StreamRouter {
     const idx = this.contextStack.findIndex((c) => c.agentId === agentId);
 
     if (idx < 0) {
-      console.warn(`[StreamRouter] Agent not found in stack: ${agentId}`);
       return undefined;
     }
 
@@ -145,11 +135,6 @@ export class StreamRouter {
     if (context.toolUseId) {
       this.idMapper.removeToolUseMapping(context.toolUseId);
     }
-
-    console.log(
-      `[StreamRouter] Agent stopped: ${context.normalizedRole} (${agentId}), ` +
-      `stack depth: ${this.contextStack.length}`
-    );
 
     return context;
   }
@@ -218,9 +203,6 @@ export class StreamRouter {
     context = this.contextStack.find((c) =>
       c.agentId.startsWith(shortId) || c.agentId.includes(shortId)
     );
-    if (context) {
-      console.log(`[StreamRouter] Partial match: transcriptAgentId ${transcriptAgentId} -> ${context.agentId}`);
-    }
     return context;
   }
 
@@ -230,7 +212,6 @@ export class StreamRouter {
   clear(): void {
     this.contextStack = [];
     this.idMapper.clear();
-    console.log('[StreamRouter] Cleared all agent contexts and ID mappings');
   }
 
   /**
