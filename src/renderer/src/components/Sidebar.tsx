@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { useTeams } from '../contexts/TeamsContext';
 import type { Team } from '../contexts/TeamsContext';
+import { UsagePanel } from './UsagePanel';
 
 function getProjectName(workingDirectory: string): string {
   return workingDirectory.split('/').filter(Boolean).pop() || workingDirectory;
@@ -136,6 +137,9 @@ export function Sidebar() {
           ))
         )}
       </div>
+
+      {/* Usage Panel */}
+      <UsagePanel />
 
       {/* Call Leader Button */}
       <div className="px-3 py-3 border-t border-slate-700">

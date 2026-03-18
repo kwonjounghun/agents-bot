@@ -61,6 +61,11 @@ interface TeamInitEvent {
 const selectDirectory = (): Promise<string | null> =>
   ipcRenderer.invoke('dialog:select-directory');
 
+// Expose Usage API to renderer
+contextBridge.exposeInMainWorld('usageAPI', {
+  getClaudeUsage: () => ipcRenderer.invoke('usage:get-claude'),
+});
+
 // Expose Claude API to renderer (minimal surface — only active consumers kept)
 contextBridge.exposeInMainWorld('claudeAPI', {
   // Notify window is ready
@@ -248,6 +253,20 @@ contextBridge.exposeInMainWorld('teamAPI', {
 // Type declarations for global window object
 declare global {
   interface Window {
+    usageAPI: {
+      getClaudeUsage: () => Promise<{
+        success: boolean;
+        data?: {
+          five_hour?: { utilization: number; resets_at: string };
+          seven_day?: { utilization: number; resets_at: string };
+          seven_day_sonnet?: { utilization: number; resets_at: string };
+          seven_day_opus?: { utilization: number; resets_at: string };
+          extra_usage?: { is_enabled: boolean; used_credits: number; monthly_limit: number };
+        };
+        plan?: string;
+        error?: string;
+      }>;
+    };
     claudeAPI: {
       notifyReady: () => void;
       selectDirectory: () => Promise<string | null>;

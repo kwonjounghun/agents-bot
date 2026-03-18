@@ -9,6 +9,7 @@ import { ipcMain, dialog } from 'electron';
 import type { TeamManager } from '../services/teamManager';
 import type { TeamServiceRegistry } from '../services/teamServiceRegistry';
 import type { AgentStatus } from '../../shared/types';
+import { getClaudeUsage } from '../services/claudeUsageService';
 
 /**
  * Services required by IPC handlers
@@ -27,6 +28,7 @@ export function registerIpcHandlers(services: IPCServices): void {
   registerControlHandlers(services);
   registerTeamHandlers(services);
   registerOmcHandlers(services);
+  registerUsageHandlers();
 }
 
 /**
@@ -221,5 +223,14 @@ function registerOmcHandlers(services: IPCServices): void {
         return svc.claudeService.initOMC(cwd);
       }
     }
+  });
+}
+
+/**
+ * Usage-related IPC handlers
+ */
+function registerUsageHandlers(): void {
+  ipcMain.handle('usage:get-claude', async () => {
+    return getClaudeUsage();
   });
 }
