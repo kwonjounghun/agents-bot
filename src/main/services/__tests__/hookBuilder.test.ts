@@ -208,7 +208,8 @@ describe('HookBuilder', () => {
     it('should build query options with required fields', () => {
       // Arrange
       const params = {
-        workingDirectory: '/path/to/project'
+        workingDirectory: '/path/to/project',
+        pathToClaudeCodeExecutable: '/usr/bin/claude'
       };
 
       // Act
@@ -225,7 +226,8 @@ describe('HookBuilder', () => {
       // Arrange
       const params = {
         workingDirectory: '/path/to/project',
-        model: 'claude-3-opus'
+        model: 'claude-3-opus',
+        pathToClaudeCodeExecutable: '/usr/bin/claude'
       };
 
       // Act
@@ -240,7 +242,8 @@ describe('HookBuilder', () => {
       const abortController = new AbortController();
       const params = {
         workingDirectory: '/path/to/project',
-        abortController
+        abortController,
+        pathToClaudeCodeExecutable: '/usr/bin/claude'
       };
 
       // Act
@@ -255,7 +258,8 @@ describe('HookBuilder', () => {
       const hooks = { SubagentStart: [{ hooks: [vi.fn()] }] };
       const params = {
         workingDirectory: '/path/to/project',
-        hooks
+        hooks,
+        pathToClaudeCodeExecutable: '/usr/bin/claude'
       };
 
       // Act
@@ -270,7 +274,8 @@ describe('HookBuilder', () => {
       const agents = { executor: { name: 'executor' } };
       const params = {
         workingDirectory: '/path/to/project',
-        agents
+        agents,
+        pathToClaudeCodeExecutable: '/usr/bin/claude'
       };
 
       // Act

@@ -164,6 +164,7 @@ export interface QueryParams {
   agents?: Record<string, unknown>;
   /** Continue the most recent conversation instead of starting a new one */
   continue?: boolean;
+  pathToClaudeCodeExecutable: string;
 }
 
 export interface QueryOptions {
@@ -194,7 +195,7 @@ export function buildQueryOptions(params: QueryParams): QueryOptions {
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
-    pathToClaudeCodeExecutable: '/opt/homebrew/bin/claude',
+    pathToClaudeCodeExecutable: params.pathToClaudeCodeExecutable,
     hooks: params.hooks,
     agents: params.agents,
     continue: params.continue

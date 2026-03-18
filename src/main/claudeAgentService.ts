@@ -6,6 +6,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { execSync } from 'child_process';
 import type { QueryOptions } from '../shared/types';
 
 // Import single-responsibility modules
@@ -214,13 +215,15 @@ export class ClaudeAgentService extends EventEmitter {
       const finalHooks = mergeHooks(baseHooks, this.omcIntegration.getHooks() as SDKHooks | null);
 
       // Build query options
+      const claudePath = execSync('which claude', { encoding: 'utf-8' }).trim();
       const queryOpts = buildQueryOptions({
         workingDirectory: this.currentWorkingDirectory,
         model,
         abortController: this.abortController,
         hooks: finalHooks,
         agents: this.omcIntegration.isEnabled() ? this.omcIntegration.getAgents() : undefined,
-        continue: continueConversation
+        continue: continueConversation,
+        pathToClaudeCodeExecutable: claudePath
       });
 
       if (this.omcIntegration.isEnabled()) {
